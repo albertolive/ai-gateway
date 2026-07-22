@@ -1,7 +1,7 @@
 # Reusable generic LLM task workflow (release notes, issue triage, etc.).
 # The caller writes a prompt file, this returns the model output as a job
 # output (`result`) and in the job summary.
-# Replace YOUR_GITHUB_USERNAME_OR_ORG below before first use.
+# Replace albertolive below before first use.
 name: AI Gateway Task (reusable)
 
 on:
@@ -55,8 +55,8 @@ jobs:
       - name: Fetch gateway scripts
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          repository: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway
-          ref: main
+          repository: albertolive/ai-gateway
+          ref: v1.0.0
           path: gateway
           sparse-checkout: |
             scripts

@@ -10,7 +10,7 @@
 # Usage: edit GATEWAY_OWNER + TARGET_REPOSITORIES, then ./deploy-callers.sh
 set -euo pipefail
 
-GATEWAY_OWNER="YOUR_GITHUB_USERNAME_OR_ORG"
+GATEWAY_OWNER="albertolive"
 VERSION_TAG="v1.0.0"
 
 TARGET_REPOSITORIES=(

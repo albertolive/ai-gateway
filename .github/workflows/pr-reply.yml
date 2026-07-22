@@ -1,6 +1,6 @@
 # Reusable conversational-reply workflow: answers when a human replies
 # inside a review thread the AI reviewer started.
-# Replace YOUR_GITHUB_USERNAME_OR_ORG below before first use.
+# Replace albertolive below before first use.
 name: AI Thread Reply (reusable)
 
 on:
@@ -30,8 +30,8 @@ jobs:
       - name: Fetch gateway scripts
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          repository: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway
-          ref: main
+          repository: albertolive/ai-gateway
+          ref: v1.0.0
           path: gateway
           sparse-checkout: |
             scripts

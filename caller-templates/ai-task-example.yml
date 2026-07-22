@@ -33,7 +33,7 @@ jobs:
     needs: build-prompt
     permissions:
       contents: read
-    uses: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway/.github/workflows/llm-task.yml@v1.0.0
+    uses: albertolive/ai-gateway/.github/workflows/llm-task.yml@v1.0.0
     with:
       prompt: ${{ needs.build-prompt.outputs.prompt }}
       task_intent: general

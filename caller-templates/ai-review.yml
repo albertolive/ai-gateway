@@ -1,5 +1,5 @@
 # Drop this file into any repo at .github/workflows/ai-review.yml
-# Replace YOUR_GITHUB_USERNAME_OR_ORG. Pin to a release tag, never @main.
+# Replace albertolive. Pin to a release tag, never @main.
 #
 # Two behaviors in one file:
 # - pull_request: full/incremental AI review with inline comments
@@ -20,7 +20,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway/.github/workflows/pr-review.yml@v1.0.0
+    uses: albertolive/ai-gateway/.github/workflows/pr-review.yml@v1.0.0
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -36,7 +36,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway/.github/workflows/pr-reply.yml@v1.0.0
+    uses: albertolive/ai-gateway/.github/workflows/pr-reply.yml@v1.0.0
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
