@@ -1,0 +1,18 @@
+# Fleet repos — one repo per line (owner/repo format).
+# Used by deploy-callers.sh, set-secrets.sh, and update-callers.sh.
+# Add new repos here; the scripts read this file automatically.
+#
+# Personal repos (albertolive)
+albertolive/meteo-brief
+albertolive/culturaCardedeu
+albertolive/eltempsavui
+albertolive/iota-apy-calculator
+albertolive/career-ops
+albertolive/breathing-timer
+albertolive/opportunity-radar
+albertolive/longevity-dashboard
+#
+# Esdeveniments org (secrets set at org level — no per-repo setup needed)
+Esdeveniments/esdeveniments-frontend
+#
+# twinfoundation-community org (secrets set at org level — no per-repo setup needed)

@@ -50,7 +50,29 @@ Scripts are **stdlib-only Python** — no `pip install`, no supply-chain surface
    Then verify all three reusable workflows use `ref: v1.0.0` in their gateway checkout step (step 2 covers this).
 6. **Add `.gitignore`.** The repo includes a `.gitignore` that excludes `__pycache__/`, generated CI outputs (`model_watch_report.md`, `pr_diff.txt`, `gateway_output.*`, etc.), and secret files. Don't track these — `model_watch_report.md` is a generated output of `check_models.py`, not a source file. If it's already tracked in a remote, untrack it with `git rm --cached model_watch_report.md`.
 7. **Enable model-watch bot PRs** (one-time, in the `ai-gateway` repo): Settings → Actions → General → Workflow permissions → check *Allow GitHub Actions to create and approve pull requests*. Optionally add the three API keys as repo secrets here too, so the watcher can also verify the Gemini and Groq models (it verifies OpenRouter without any key).
-8. **Deploy callers.** Copy `caller-templates/ai-review.yml` into each repo's `.github/workflows/`, or edit the repo list in `deploy-callers.sh` and run it (needs `gh auth refresh -s workflow`).
+8. **Deploy callers.** Edit `fleet-repos.txt` (one repo per line, `owner/repo` format), then run `./deploy-callers.sh` (needs `gh auth refresh -s workflow`). The script reads the fleet file and pushes the caller workflow to each repo.
+9. **Set API key secrets.** Run `./set-secrets.sh` — paste your 3 free API keys once, and the script distributes them across all repos in `fleet-repos.txt` + both orgs + the gateway repo itself. For org repos (`Esdeveniments/*`, `twinfoundation-community/*`), it sets org-level secrets (one-time, covers all current + future repos). For personal repos, it sets per-repo secrets. Idempotent — re-run anytime to rotate keys. Use `./set-secrets.sh --list` to check which repos have which secrets.
+
+## Fleet management
+
+Three scripts manage the entire fleet from this repo. All read `fleet-repos.txt` as the single source of truth — add or remove repos there, not in the scripts.
+
+| Script | What it does | When to run |
+|---|---|---|
+| `deploy-callers.sh` | Pushes `ai-review.yml` caller to every repo in `fleet-repos.txt` | When adding new repos to the fleet |
+| `set-secrets.sh` | Distributes/rotates API keys across all repos + orgs | When rotating keys or adding repos |
+| `update-callers.sh` | Bumps the `@vX.Y.Z` tag in every repo's caller | When you tag a new gateway release |
+
+**Lifecycle of a gateway upgrade:**
+1. Edit code in `ai-gateway`, commit, push
+2. `git tag v1.1.0 && git push origin v1.1.0`
+3. `./update-callers.sh v1.1.0` — bumps all fleet repos to the new tag
+4. `./update-callers.sh v1.1.0 --dry-run` to preview before pushing
+
+**Adding a new repo to the fleet:**
+1. Add it to `fleet-repos.txt`
+2. `./deploy-callers.sh` — pushes the caller workflow
+3. `./set-secrets.sh` — distributes API keys (or skip if it's an org repo with org-level secrets already set)
 
 ## Testing
 

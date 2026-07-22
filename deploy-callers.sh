@@ -12,11 +12,24 @@ set -euo pipefail
 
 GATEWAY_OWNER="albertolive"
 VERSION_TAG="v1.0.0"
+FLEET_FILE="$(dirname "$0")/fleet-repos.txt"
 
-TARGET_REPOSITORIES=(
-  # "owner/repo-one"
-  # "owner/repo-two"
-)
+# Read repo list from fleet-repos.txt (one per line, # = comment)
+if [ ! -f "$FLEET_FILE" ]; then
+  echo "❌ $FLEET_FILE not found. Create it with one repo per line (owner/repo)." >&2
+  exit 1
+fi
+TARGET_REPOSITORIES=()
+while IFS= read -r line; do
+  [[ "$line" =~ ^# ]] && continue
+  [[ -z "$(echo "$line" | tr -d '[:space:]')" ]] && continue
+  TARGET_REPOSITORIES+=("$(echo "$line" | tr -d '[:space:]')")
+done < "$FLEET_FILE"
+
+if [ ${#TARGET_REPOSITORIES[@]} -eq 0 ]; then
+  echo "No repos in $FLEET_FILE (uncomment some lines)." >&2
+  exit 1
+fi
 
 CALLER_TEMPLATE=$(cat <<EOF
 name: AI PR Review
@@ -94,6 +107,9 @@ for repo in "${TARGET_REPOSITORIES[@]}"; do
   rm -rf "$name"
 done
 
-echo "Done. Remember: each repo (or the org) needs the API-key secrets set."
-echo "Per-repo example:"
-echo '  gh secret set OPENROUTER_API_KEY -R owner/repo --body "sk-or-..."'
+echo
+echo "✅ Callers deployed to ${#TARGET_REPOSITORIES[@]} repos."
+echo "Next steps:"
+echo "  1. Set API keys: ./set-secrets.sh"
+echo "  2. To update the gateway version later: ./update-callers.sh v1.1.0"
+echo "  3. To check secret status: ./set-secrets.sh --list"
