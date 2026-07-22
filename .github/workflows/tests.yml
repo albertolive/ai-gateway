@@ -26,8 +26,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install pytest
-        run: pip install --quiet pytest
+      - name: Install test dependencies
+        run: pip install --quiet pytest pyyaml
 
       - name: Run tests
         run: python3 -m pytest tests/ -v --tb=short
