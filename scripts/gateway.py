@@ -6,8 +6,8 @@ so only Python stdlib is needed (no pip install in CI).
 
 Verified July 2026:
 - OpenRouter free tier: ~20 req/min, ~200 req/day shared across :free models.
-- Google AI Studio: gemini-3.5-flash free tier (OpenAI-compat endpoint,
-  model name WITHOUT the "google/" prefix).
+- Google AI Studio: gemini-2.0-flash free tier (OpenAI-compat endpoint,
+  model name WITHOUT the "google/" prefix). 15 RPM, 1,500 RPD.
 - Groq free tier: llama-3.3-70b-versatile 30 RPM / 1K RPD.
 """
 
