@@ -52,12 +52,13 @@ if [ "${1:-}" = "--list" ]; then
   done
   echo
   echo "=== Repo-level secrets (personal repos) ==="
-  while IFS= read -r repo; do
-    [[ "$repo" =~ ^# ]] && continue
-    [[ -z "$repo" ]] && continue
+  while IFS= read -r repo || [ -n "$repo" ]; do
+    [[ "$repo" =~ ^[[:space:]]*# ]] && continue
     repo=$(echo "$repo" | tr -d '[:space:]')
+    [[ -z "$repo" ]] && continue
     # Skip org repos (they inherit org-level secrets)
-    if [[ "$repo" == */* ]] && [[ " ${ORGS[*]} " == *" $(echo "$repo" | cut -d/ -f1) "* ]]; then
+    owner=${repo%%/*}
+    if [[ " ${ORGS[*]} " == *" $owner "* ]]; then
       continue
     fi
     echo -n "$repo: "
@@ -101,12 +102,12 @@ for org in "${ORGS[@]}"; do
 done
 
 # 2. Personal repos (per-repo, since personal accounts lack org-level secrets)
-while IFS= read -r repo; do
-  [[ "$repo" =~ ^# ]] && continue
-  [[ -z "$repo" ]] && continue
+while IFS= read -r repo || [ -n "$repo" ]; do
+  [[ "$repo" =~ ^[[:space:]]*# ]] && continue
   repo=$(echo "$repo" | tr -d '[:space:]')
+  [[ -z "$repo" ]] && continue
   # Skip org repos — they're covered by org-level secrets above
-  owner=$(echo "$repo" | cut -d/ -f1)
+  owner=${repo%%/*}
   if [[ " ${ORGS[*]} " == *" $owner "* ]]; then
     echo "  $repo (org repo — covered by org-level secrets)"
     continue
@@ -138,7 +139,7 @@ done
 echo
 echo "🎉 Done. Secrets distributed to:"
 echo "   - $(echo "${ORGS[*]}" | wc -w | tr -d ' ') orgs (org-level, covers all current + future repos)"
-echo "   - $(grep -v '^#' "$FLEET_FILE" | grep -c 'albertolive') personal repos"
+echo "   - $(grep -v '^#' "$FLEET_FILE" | grep -v '^[[:space:]]*$' | while IFS= read -r r; do r=$(echo "$r"|tr -d '[:space:]'); [[ -n "$r" ]] && owner=${r%%/*}; [[ " ${ORGS[*]} " != *" $owner "* ]] && echo "$r"; done | wc -l | tr -d ' ') personal repos"
 echo "   - ai-gateway repo"
 echo
 echo "Verify with: ./set-secrets.sh --list"

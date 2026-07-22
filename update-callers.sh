@@ -40,10 +40,10 @@ cd "$WORKSPACE"
 updated=0
 skipped=0
 
-while IFS= read -r repo; do
-  [[ "$repo" =~ ^# ]] && continue
-  [[ -z "$repo" ]] && continue
+while IFS= read -r repo || [ -n "$repo" ]; do
+  [[ "$repo" =~ ^[[:space:]]*# ]] && continue
   repo=$(echo "$repo" | tr -d '[:space:]')
+  [[ -z "$repo" ]] && continue
   name=$(basename "$repo")
 
   echo -n "  $repo: "

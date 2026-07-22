@@ -20,10 +20,11 @@ if [ ! -f "$FLEET_FILE" ]; then
   exit 1
 fi
 TARGET_REPOSITORIES=()
-while IFS= read -r line; do
-  [[ "$line" =~ ^# ]] && continue
-  [[ -z "$(echo "$line" | tr -d '[:space:]')" ]] && continue
-  TARGET_REPOSITORIES+=("$(echo "$line" | tr -d '[:space:]')")
+while IFS= read -r line || [ -n "$line" ]; do
+  [[ "$line" =~ ^[[:space:]]*# ]] && continue
+  line=$(echo "$line" | tr -d '[:space:]')
+  [[ -z "$line" ]] && continue
+  TARGET_REPOSITORIES+=("$line")
 done < "$FLEET_FILE"
 
 if [ ${#TARGET_REPOSITORIES[@]} -eq 0 ]; then
