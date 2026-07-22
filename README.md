@@ -54,7 +54,7 @@ Scripts are **stdlib-only Python** — no `pip install`, no supply-chain surface
 
 ## Testing
 
-The project has a test suite (106 tests) covering the diff parser, comment validator, impact analysis, context/docs resolution, lint/secrets scan, gateway cascade loading, model-watch ranking, and learnings memory logic. Tests are pure-logic (no network calls) and use pytest.
+The project has a test suite (151 tests) covering the diff parser, comment validator, impact analysis, context/docs resolution, lint/secrets scan, gateway cascade loading, model-watch ranking, learnings memory, workflow YAML validation, gateway error handling/failover, and reply/schema validation. Tests are pure-logic (no network calls) and use pytest.
 
 ```bash
 python3 -m pytest tests/ -v
