@@ -1,0 +1,17 @@
+{
+  "_comment": "Cascade config. Edited by humans and by the model-watch bot PRs. structured: json_schema = strict structured outputs; json_object = schema embedded in prompt. Model IDs verified July 2026: openrouter cohere/north-mini-code:free and poolside/laguna-m.1:free confirmed live in catalog (qwen/qwen3-coder:free was removed and replaced); gemini-2.0-flash is the current valid Flash model on Google's OpenAI-compatible endpoint (no google/ prefix, gemini-3.5-flash does not exist); groq llama-3.3-70b-versatile is the current Groq free-tier Llama 70B model.",
+  "cascades": {
+    "code_review": [
+      {"provider": "openrouter", "model": "cohere/north-mini-code:free", "structured": "json_schema"},
+      {"provider": "openrouter", "model": "poolside/laguna-m.1:free", "structured": "json_schema"},
+      {"provider": "gemini", "model": "gemini-2.0-flash", "structured": "json_schema"},
+      {"provider": "groq", "model": "llama-3.3-70b-versatile", "structured": "json_object"},
+      {"provider": "openrouter", "model": "openrouter/free", "structured": "json_object"}
+    ],
+    "general": [
+      {"provider": "gemini", "model": "gemini-2.0-flash", "structured": "json_schema"},
+      {"provider": "groq", "model": "llama-3.3-70b-versatile", "structured": "json_object"},
+      {"provider": "openrouter", "model": "openrouter/free", "structured": "json_object"}
+    ]
+  }
+}

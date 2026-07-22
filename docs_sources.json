@@ -1,0 +1,8 @@
+{
+  "_comment": "OPTIONAL manual overrides: dependency name -> docs URL, taking priority over dynamic resolution (npm registry homepage -> llms.txt probe -> Context7). Use for packages whose llms.txt lives at a non-standard path, or internal libraries. All URLs below verified July 2026.",
+  "next": "https://nextjs.org/docs/llms.txt",
+  "react": "https://react.dev/llms.txt",
+  "svelte": "https://svelte.dev/llms.txt",
+  "@sveltejs/kit": "https://svelte.dev/docs/kit/llms.txt",
+  "ai": "https://ai-sdk.dev/llms.txt"
+}

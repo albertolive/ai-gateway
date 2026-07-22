@@ -1,0 +1,85 @@
+"""Tests for scripts/gateway.py — cascade loading and provider config."""
+
+import json
+import os
+import tempfile
+
+import gateway
+
+
+class TestLoadCascades:
+    def test_loads_from_models_json(self):
+        cascades = gateway.load_cascades()
+        assert "code_review" in cascades
+        assert "general" in cascades
+
+    def test_code_review_has_ordered_entries(self):
+        cascades = gateway.load_cascades()
+        cr = cascades["code_review"]
+        assert len(cr) >= 3
+        # Each entry has required keys
+        for e in cr:
+            assert "name" in e
+            assert "url" in e
+            assert "key_env" in e
+            assert "model" in e
+            assert "structured" in e
+
+    def test_general_cascade_openrouter_free_last(self):
+        cascades = gateway.load_cascades()
+        gen = cascades["general"]
+        # openrouter/free should be the safety net (last), not first
+        models = [e["model"] for e in gen]
+        assert models[-1] == "openrouter/free"
+        assert models[0] != "openrouter/free"
+
+    def test_code_review_has_safety_net(self):
+        cascades = gateway.load_cascades()
+        cr = cascades["code_review"]
+        models = [e["model"] for e in cr]
+        assert "openrouter/free" in models
+
+    def test_gemini_model_is_2_0_flash(self):
+        cascades = gateway.load_cascades()
+        for intent, entries in cascades.items():
+            for e in entries:
+                if "gemini" in e["name"]:
+                    assert e["model"] == "gemini-2.0-flash"
+                    assert "gemini-3.5-flash" not in e["model"]
+
+    def test_no_dead_qwen_model(self):
+        cascades = gateway.load_cascades()
+        for intent, entries in cascades.items():
+            for e in entries:
+                assert e["model"] != "qwen/qwen3-coder:free"
+
+    def test_custom_config(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json",
+                                         delete=False) as f:
+            json.dump({"cascades": {
+                "test": [{"provider": "groq", "model": "test-model",
+                          "structured": "json_object"}]
+            }}, f)
+            f.flush()
+            try:
+                cascades = gateway.load_cascades(f.name)
+                assert "test" in cascades
+                assert cascades["test"][0]["model"] == "test-model"
+                assert cascades["test"][0]["key_env"] == "GROQ_API_KEY"
+            finally:
+                os.unlink(f.name)
+
+
+class TestProviders:
+    def test_all_providers_have_url_and_key(self):
+        for name, p in gateway.PROVIDERS.items():
+            assert "url" in p, f"provider {name} missing url"
+            assert "key_env" in p, f"provider {name} missing key_env"
+            assert p["url"].startswith("https://"), \
+                f"provider {name} url not https"
+
+    def test_gemini_url_has_openai_compat_path(self):
+        assert "/openai" in gateway.PROVIDERS["gemini"]["url"]
+
+    def test_groq_url_has_openai_compat_path(self):
+        assert "/openai" in gateway.PROVIDERS["groq"]["url"]

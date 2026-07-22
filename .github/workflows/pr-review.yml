@@ -1,0 +1,72 @@
+# Reusable AI PR review workflow (call from other repos).
+# Replace YOUR_GITHUB_USERNAME_OR_ORG below before first use.
+name: AI PR Review (reusable)
+
+on:
+  workflow_call:
+    secrets:
+      OPENROUTER_API_KEY:
+        required: false
+      GEMINI_API_KEY:
+        required: false
+      GROQ_API_KEY:
+        required: false
+      CONTEXT7_API_KEY:
+        required: false
+
+# Cancel superseded runs when new commits land on the same PR
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write # learnings memory (see scripts/learnings.py)
+    steps:
+      # PR head checkout: enables incremental diffs (full history) and
+      # context gathering (.ai-review.md, dependency manifests).
+      - name: Checkout PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: target
+          persist-credentials: false
+
+      - name: Fetch gateway scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway
+          ref: main
+          path: gateway
+          sparse-checkout: |
+            scripts
+            models.json
+          persist-credentials: false
+
+      # Best-effort static analyzers (shellcheck is preinstalled on
+      # ubuntu runners; a missing tool is simply skipped by lint.py)
+      - name: Install analyzers
+        run: pip install --quiet ruff || true
+
+      - name: Get PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > pr_diff.txt
+
+      - name: Run AI review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+          TARGET_DIR: target
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
+        run: python3 gateway/scripts/review.py

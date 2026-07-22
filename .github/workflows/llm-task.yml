@@ -1,0 +1,88 @@
+# Reusable generic LLM task workflow (release notes, issue triage, etc.).
+# The caller writes a prompt file, this returns the model output as a job
+# output (`result`) and in the job summary.
+# Replace YOUR_GITHUB_USERNAME_OR_ORG below before first use.
+name: AI Gateway Task (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      prompt:
+        description: Prompt text (use this OR prompt_file)
+        type: string
+        default: ""
+      prompt_file:
+        description: Path (in the caller's checkout) to a prompt file
+        type: string
+        default: ""
+      task_intent:
+        description: Cascade to use (general | code_review)
+        type: string
+        default: general
+      system_prompt:
+        description: Optional system prompt
+        type: string
+        default: ""
+    outputs:
+      result:
+        description: Model output text
+        value: ${{ jobs.run.outputs.result }}
+      provider:
+        description: Provider that served the request
+        value: ${{ jobs.run.outputs.provider }}
+    secrets:
+      OPENROUTER_API_KEY:
+        required: false
+      GEMINI_API_KEY:
+        required: false
+      GROQ_API_KEY:
+        required: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.task.outputs.result }}
+      provider: ${{ steps.task.outputs.provider }}
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Fetch gateway scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway
+          ref: main
+          path: gateway
+          sparse-checkout: |
+            scripts
+            models.json
+          persist-credentials: false
+
+      - name: Prepare prompt
+        env:
+          PROMPT_TEXT: ${{ inputs.prompt }}
+          PROMPT_FILE_IN: ${{ inputs.prompt_file }}
+        run: |
+          if [ -n "$PROMPT_TEXT" ]; then
+            printf '%s' "$PROMPT_TEXT" > _gateway_prompt.txt
+          elif [ -n "$PROMPT_FILE_IN" ] && [ -f "$PROMPT_FILE_IN" ]; then
+            cp "$PROMPT_FILE_IN" _gateway_prompt.txt
+          else
+            echo "::error::Provide 'prompt' or an existing 'prompt_file'"; exit 1
+          fi
+
+      - name: Run gateway task
+        id: task
+        env:
+          PROMPT_FILE: _gateway_prompt.txt
+          TASK_INTENT: ${{ inputs.task_intent }}
+          SYSTEM_PROMPT: ${{ inputs.system_prompt }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python3 gateway/scripts/llm_task.py

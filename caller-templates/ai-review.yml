@@ -1,0 +1,43 @@
+# Drop this file into any repo at .github/workflows/ai-review.yml
+# Replace YOUR_GITHUB_USERNAME_OR_ORG. Pin to a release tag, never @main.
+#
+# Two behaviors in one file:
+# - pull_request: full/incremental AI review with inline comments
+# - pull_request_review_comment: conversational replies when you answer
+#   the bot inside one of its review threads
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  review:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    uses: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway/.github/workflows/pr-review.yml@v1.0.0
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
+
+  reply:
+    if: >
+      github.event_name == 'pull_request_review_comment' &&
+      github.event.comment.user.type != 'Bot' &&
+      github.event.comment.in_reply_to_id != null
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    uses: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway/.github/workflows/pr-reply.yml@v1.0.0
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

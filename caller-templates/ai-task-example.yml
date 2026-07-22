@@ -1,0 +1,46 @@
+# Example: generate release notes with the generic gateway task.
+# Adapt freely; shows the string-prompt -> job-output pattern.
+name: AI Release Notes
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-prompt:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      prompt: ${{ steps.p.outputs.prompt }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build prompt
+        id: p
+        run: |
+          {
+            echo "prompt<<PROMPT_EOF"
+            echo "Write concise markdown release notes from these commits:"
+            echo
+            git log --oneline "$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo HEAD~20)"..HEAD
+            echo "PROMPT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  generate:
+    needs: build-prompt
+    permissions:
+      contents: read
+    uses: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway/.github/workflows/llm-task.yml@v1.0.0
+    with:
+      prompt: ${{ needs.build-prompt.outputs.prompt }}
+      task_intent: general
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+
+  # Consume the result: ${{ needs.generate.outputs.result }}
+  # e.g. append it to the GitHub release body with `gh release edit`.

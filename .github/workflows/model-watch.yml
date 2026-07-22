@@ -1,0 +1,69 @@
+# Runs in the ai-gateway repo itself (not reusable). Every Monday it checks
+# whether pinned models are still alive/free, replaces dead ones, and opens
+# a PR with a full report — including new free candidates worth promoting.
+#
+# One-time repo setting required for the bot PR:
+#   Settings -> Actions -> General -> Workflow permissions ->
+#   check "Allow GitHub Actions to create and approve pull requests".
+name: Model Watch
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: model-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Check model catalogs
+        id: check
+        env:
+          # Optional: set these as repo secrets in ai-gateway to also
+          # verify the Gemini and Groq models (skipped otherwise).
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python3 scripts/check_models.py --update
+
+      - name: Open or update bot PR
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "model-watch-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B model-watch/updates
+          git add models.json
+          git commit -m "chore(models): replace deprecated/no-longer-free models"
+          git push -f origin model-watch/updates
+          if ! gh pr view model-watch/updates &>/dev/null; then
+            gh pr create \
+              --title "Model watch: cascade updates" \
+              --body-file model_watch_report.md \
+              --base main --head model-watch/updates
+          else
+            gh pr edit model-watch/updates --body-file model_watch_report.md
+          fi
+
+      - name: Publish report to run summary
+        if: always()
+        run: cat model_watch_report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      # No changes but candidates exist: keep the report visible in the run
+      # summary. If you also want a weekly issue instead, uncomment:
+      # - name: Open attention issue
+      #   if: steps.check.outputs.attention == 'true' && steps.check.outputs.changed != 'true'
+      #   env:
+      #     GH_TOKEN: ${{ github.token }}
+      #   run: gh issue create --title "Model watch needs attention" --body-file model_watch_report.md

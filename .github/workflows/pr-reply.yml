@@ -1,0 +1,49 @@
+# Reusable conversational-reply workflow: answers when a human replies
+# inside a review thread the AI reviewer started.
+# Replace YOUR_GITHUB_USERNAME_OR_ORG below before first use.
+name: AI Thread Reply (reusable)
+
+on:
+  workflow_call:
+    secrets:
+      OPENROUTER_API_KEY:
+        required: false
+      GEMINI_API_KEY:
+        required: false
+      GROQ_API_KEY:
+        required: false
+
+# Cancel superseded reply runs for the same PR (prevents duplicate
+# responses when someone rapid-fires replies in a thread)
+concurrency:
+  group: ai-reply-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write # learnings memory (see scripts/learnings.py)
+    steps:
+      - name: Fetch gateway scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: YOUR_GITHUB_USERNAME_OR_ORG/ai-gateway
+          ref: main
+          path: gateway
+          sparse-checkout: |
+            scripts
+            models.json
+          persist-credentials: false
+
+      - name: Generate and post reply
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python3 gateway/scripts/reply.py
