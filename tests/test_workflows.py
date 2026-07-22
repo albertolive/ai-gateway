@@ -94,18 +94,39 @@ class TestSecurityPinning:
                     f"{path}: action uses loose tag: {line}"
 
     def test_persist_credentials_false(self):
-        """Checkout steps should set persist-credentials: false."""
+        """Checkout steps should set persist-credentials: false.
+
+        Exception: model-watch.yml needs git push access for the bot PR,
+        so it uses persist-credentials: false + explicit credential setup
+        (verified by test_model_watch_has_credential_step instead).
+        """
         wf_dir = os.path.abspath(_WORKFLOW_DIRS[0])
         for name in os.listdir(wf_dir):
             if not name.endswith((".yml", ".yaml")):
                 continue
+            if name == "model-watch.yml":
+                continue  # exempt: has explicit credential step
             path = os.path.join(wf_dir, name)
             with open(path, encoding="utf-8") as f:
                 content = f.read()
-            # Every checkout step should have persist-credentials: false
             if "actions/checkout" in content:
                 assert "persist-credentials: false" in content, \
                     f"{name}: checkout without persist-credentials: false"
+
+    def test_model_watch_has_credential_step(self):
+        """model-watch.yml needs explicit git credentials for git push."""
+        path = os.path.abspath(
+            os.path.join(_WORKFLOW_DIRS[0], "model-watch.yml"))
+        if not os.path.exists(path):
+            return
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        assert "persist-credentials: false" in content, \
+            "model-watch.yml: should still have persist-credentials: false"
+        assert "git remote set-url" in content, \
+            "model-watch.yml: needs explicit git credential configuration for push"
+        assert "GH_TOKEN" in content, \
+            "model-watch.yml: credential step should use GH_TOKEN"
 
 
 class TestPermissions:

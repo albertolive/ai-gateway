@@ -26,7 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          persist-credentials: false
+          persist-credentials: false # don't leave creds in git config; we set them explicitly below
+
+      # model-watch needs to push the bot PR branch, so configure git
+      # credentials explicitly instead of relying on checkout's persistence.
+      - name: Configure git credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
       - name: Check model catalogs
         id: check
