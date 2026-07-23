@@ -33,6 +33,16 @@ CODING_HINTS = ("coder", "code", "laguna", "codestral", "devstral", "starcoder")
 # Never auto-remove these: the auto-router is the safety net, and non-OpenRouter
 # entries are validated separately.
 AUTO_ROUTER = "openrouter/free"
+# Scored well here (catalog metadata: coding-name and/or structured_outputs)
+# but disproven live against a real prompt -- excluded so it stops resurfacing
+# as a "promising candidate" every week. Add the finding, not just the ID.
+KNOWN_UNSUITABLE = {
+    "nvidia/nemotron-3-super-120b-a12b:free":
+        "leaks raw chain-of-thought into message.content under a real "
+        "constrained prompt (verified live, July 2026, esdeveniments-"
+        "social-publisher's caption generation) -- a reasoning-hybrid model "
+        "putting reasoning where the output should be.",
+}
 
 
 def _get(url, headers=None, timeout=45):
@@ -97,7 +107,7 @@ def model_exists(provider, model):
 def rank_candidates(catalog, pinned_ids):
     out = []
     for mid, m in catalog.items():
-        if not is_free(m) or mid in pinned_ids or mid == AUTO_ROUTER:
+        if not is_free(m) or mid in pinned_ids or mid == AUTO_ROUTER or mid in KNOWN_UNSUITABLE:
             continue
         params = m.get("supported_parameters", []) or []
         score = 0

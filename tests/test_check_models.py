@@ -53,6 +53,20 @@ class TestRankCandidates:
         ids = [c["id"] for c in candidates]
         assert "openrouter/free" not in ids
 
+    def test_excludes_known_unsuitable(self):
+        # A model that scores well on catalog metadata but was disproven live
+        # (e.g. reasoning leak) shouldn't keep resurfacing as a candidate.
+        catalog = {
+            "nvidia/nemotron-3-super-120b-a12b:free": {
+                "id": "nvidia/nemotron-3-super-120b-a12b:free",
+                "pricing": {"prompt": "0", "completion": "0"},
+                "supported_parameters": ["structured_outputs"],
+            },
+        }
+        candidates = check_models.rank_candidates(catalog, set())
+        ids = [c["id"] for c in candidates]
+        assert "nvidia/nemotron-3-super-120b-a12b:free" not in ids
+
     def test_excludes_paid(self):
         catalog = {
             "paid:free": {"id": "paid:free",
