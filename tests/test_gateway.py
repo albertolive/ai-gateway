@@ -53,6 +53,13 @@ class TestLoadCascades:
             for e in entries:
                 assert e["model"] != "qwen/qwen3-coder:free"
 
+    def test_deepseek_cheap_cascade(self):
+        cascades = gateway.load_cascades()
+        assert "deepseek_cheap" in cascades
+        entry = cascades["deepseek_cheap"][0]
+        assert entry["name"] == "deepseek/deepseek-v4-flash"
+        assert entry["key_env"] == "DEEPSEEK_API_KEY"
+
     def test_custom_config(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json",
                                          delete=False) as f:
@@ -83,3 +90,7 @@ class TestProviders:
 
     def test_groq_url_has_openai_compat_path(self):
         assert "/openai" in gateway.PROVIDERS["groq"]["url"]
+
+    def test_deepseek_provider_configured(self):
+        assert gateway.PROVIDERS["deepseek"]["url"] == "https://api.deepseek.com"
+        assert gateway.PROVIDERS["deepseek"]["key_env"] == "DEEPSEEK_API_KEY"

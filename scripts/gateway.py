@@ -18,20 +18,21 @@ import time
 import urllib.error
 import urllib.request
 
-PROVIDERS = {
-    "openrouter": {"url": "https://openrouter.ai/api/v1",
-                   "key_env": "OPENROUTER_API_KEY"},
-    "gemini": {"url": "https://generativelanguage.googleapis.com/v1beta/openai",
-               "key_env": "GEMINI_API_KEY"},
-    "groq": {"url": "https://api.groq.com/openai/v1",
-             "key_env": "GROQ_API_KEY"},
-}
-
-# Cascades live in models.json (repo root) so the model-watch bot can
-# update them via PR without touching code. structured: "json_schema" ->
-# strict structured outputs; "json_object" -> schema embedded in prompt.
+# Providers and cascades live in models.json (repo root) so the model-watch
+# bot can update them via PR without touching code, and so app repos calling
+# the gateway config directly (see app-callers/) share the same source of
+# truth. structured: "json_schema" -> strict structured outputs;
+# "json_object" -> schema embedded in prompt.
 _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "..", "models.json")
+
+
+def _load_providers(path=_CONFIG_PATH):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)["providers"]
+
+
+PROVIDERS = _load_providers()
 
 
 def load_cascades(path=_CONFIG_PATH):

@@ -90,7 +90,7 @@ Edit centrally, tag `v1.1.0`, then bump the tag in callers when ready. Nothing b
 
 ## Customizing
 
-- **Models/providers:** edit `models.json` — no code changes needed. The model-watch bot edits the same file, so your manual picks and its replacements coexist. Provider endpoints/keys are mapped in `PROVIDERS` in `scripts/gateway.py`.
+- **Models/providers:** edit `models.json` — no code changes needed. The model-watch bot edits the same file, so your manual picks and its replacements coexist. Provider endpoints/keys are mapped in the `providers` key of `models.json` (loaded into `PROVIDERS` by `scripts/gateway.py` at import time).
 - **Model-watch behavior:** deprecation handling is automatic (dead models replaced in the bot PR); promotion of *new* models is deliberate (they're ranked in the report — +2 coding-oriented name, +1 strict structured outputs, tie-break by context length — and you promote one by editing `models.json`). The `openrouter/free` auto-router entry is a permanent safety net: even between weekly runs, a dead pinned model just fails over at runtime.
 - **Review behavior:** edit `SYSTEM_PROMPT` in `scripts/review.py`. Comment cap (10) and diff-size cap (`MAX_DIFF_CHARS`, 200 KB) are constants there.
 - **Per-repo guidelines:** add a `.ai-review.md` to any target repo — conventions to enforce, patterns to ignore, domain context. It's prepended to every review of that repo.
@@ -98,6 +98,20 @@ Edit centrally, tag `v1.1.0`, then bump the tag in callers when ready. Nothing b
 - **Cross-file impact analysis:** `impact.py` extracts symbols from removed/modified diff lines using regex patterns for Python, JS/TS, Go, and Rust, then greps the repo (via `os.walk`) for word-boundary references in source files outside the diff. Noise dirs (`node_modules`, `.git`, `__pycache__`, etc.), dunder methods (`__init__`, `__str__`), and common short names (`get`, `set`, `run`) are filtered. Capped at 10 symbols / 15 refs / 2000 files scanned to respect free-tier token limits and CI runner time. Not a full code graph — no type inference or call-chain analysis — but catches the most common cross-file breakage class for free.
 - **Incremental caveat:** if a PR merges its base branch in, those merged commits appear in the incremental diff too. The `synchronize` trigger fires on every push; concurrency cancellation keeps only the newest run.
 - **Enforcement (orgs):** add a Repository Ruleset requiring the `review` status check on protected branches, so deleting the caller file can't bypass review.
+
+## Using ai-gateway from application runtime code (not CI)
+
+The gateway isn't limited to GitHub Actions. `models.json` at the repo root is the single source of truth for both provider endpoints (`providers`) and model cascades (`cascades`), and it's a public file you can fetch over HTTPS from any app, in any language, without checking out this repo.
+
+`app-callers/` has a vendored client per language (`gateway_client.py`, `gateway-client.js`): copy the one file into your app once. It fetches `models.json` from `raw.githubusercontent.com` on each call, resolves the requested cascade to a provider + model, and calls that provider's OpenAI-compatible endpoint directly with your app's own API key — no gateway server, no shared secret, no extra infrastructure to host or keep alive. If the fetch fails (a GitHub hiccup), it falls back to OpenRouter's free auto-router so the app degrades instead of hard-failing.
+
+```python
+from gateway_client import complete
+text = complete("Summarize this forecast: ...")                    # free tier, cascade="general"
+text = complete("...", cascade="deepseek_cheap")                   # paid, needs DEEPSEEK_API_KEY
+```
+
+Because the app only ever references a cascade name, swapping the underlying model, adding a new provider, or retiring a dead free-tier model is a one-line edit to `models.json` in this repo — every app picks it up on its next call, with zero app-code changes. This is also how you add a paid provider like DeepSeek without going through OpenRouter's markup: `providers.deepseek` points straight at `api.deepseek.com`, billed on your own DeepSeek account, and the `deepseek_cheap` cascade pins `deepseek-v4-flash`. Paid cascades are never mixed into `general`/`code_review`, so CI (and any app defaulting to `general`) never triggers deepseek spend by accident — it's opt-in per call.
 
 ## Design notes (why it's built this way)
 
