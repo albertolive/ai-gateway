@@ -24,12 +24,13 @@ GATEWAY_REPO="albertolive/ai-gateway"
 ORGS=("Esdeveniments" "twinfoundation-community")
 FLEET_FILE="$(dirname "$0")/fleet-repos.txt"
 
-# Secrets to manage: name -> prompt label
-declare -A SECRET_NAMES=(
-  ["OPENROUTER_API_KEY"]="OpenRouter API key (sk-or-...)"
-  ["GEMINI_API_KEY"]="Google AI Studio API key (AIza...)"
-  ["GROQ_API_KEY"]="Groq API key (gsk_...)"
-  ["CONTEXT7_API_KEY"]="Context7 API key (optional, press Enter to skip)"
+# Secrets to manage: array of "name:label" pairs.
+# Uses indexed arrays (not declare -A) for bash 3.x compatibility on macOS.
+SECRET_NAMES=(
+  "OPENROUTER_API_KEY:OpenRouter API key (sk-or-...)"
+  "GEMINI_API_KEY:Google AI Studio API key (AIza...)"
+  "GROQ_API_KEY:Groq API key (gsk_...)"
+  "CONTEXT7_API_KEY:Context7 API key (optional, press Enter to skip)"
 )
 
 if ! gh auth status &>/dev/null; then
@@ -73,14 +74,20 @@ if [ "${1:-}" = "--list" ]; then
 fi
 
 # Collect key values (from env vars or interactive prompt)
-declare -A SECRET_VALUES
-for name in "${!SECRET_NAMES[@]}"; do
-  if [ -n "${!name:-}" ]; then
-    SECRET_VALUES["$name"]="${!name}"
+SECRET_VALUES=()
+for entry in "${SECRET_NAMES[@]}"; do
+  name="${entry%%:*}"
+  label="${entry#*:}"
+  # Safe env var read even with set -u (disable briefly for indirect expansion)
+  set +u
+  existing="${!name}"
+  set -u
+  if [ -n "$existing" ]; then
+    SECRET_VALUES+=("$name=$existing")
   else
-    read -s -p "${SECRET_NAMES[$name]}: " value
+    read -s -p "$label: " value
     echo
-    SECRET_VALUES["$name"]="$value"
+    SECRET_VALUES+=("$name=$value")
   fi
 done
 
@@ -90,8 +97,9 @@ echo "🚀 Distributing secrets to fleet..."
 # 1. Org-level secrets (covers all current + future org repos)
 for org in "${ORGS[@]}"; do
   echo "  org: $org"
-  for name in "${!SECRET_VALUES[@]}"; do
-    value="${SECRET_VALUES[$name]}"
+  for entry in "${SECRET_VALUES[@]}"; do
+    name="${entry%%=*}"
+    value="${entry#*=}"
     [ -z "$value" ] && continue
     if gh secret set "$name" --org "$org" --body "$value" 2>/dev/null; then
       echo "    ✅ $name"
@@ -113,8 +121,9 @@ while IFS= read -r repo || [ -n "$repo" ]; do
     continue
   fi
   echo "  repo: $repo"
-  for name in "${!SECRET_VALUES[@]}"; do
-    value="${SECRET_VALUES[$name]}"
+  for entry in "${SECRET_VALUES[@]}"; do
+    name="${entry%%=*}"
+    value="${entry#*=}"
     [ -z "$value" ] && continue
     if gh secret set "$name" -R "$repo" --body "$value" 2>/dev/null; then
       echo "    ✅ $name"
@@ -126,8 +135,9 @@ done < "$FLEET_FILE"
 
 # 3. ai-gateway itself (for model-watch workflow)
 echo "  repo: $GATEWAY_REPO (model-watch)"
-for name in "${!SECRET_VALUES[@]}"; do
-  value="${SECRET_VALUES[$name]}"
+for entry in "${SECRET_VALUES[@]}"; do
+  name="${entry%%=*}"
+  value="${entry#*=}"
   [ -z "$value" ] && continue
   if gh secret set "$name" -R "$GATEWAY_REPO" --body "$value" 2>/dev/null; then
     echo "    ✅ $name"
