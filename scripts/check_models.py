@@ -104,6 +104,96 @@ def model_exists(provider, model):
         return None  # network issue: don't declare a model dead on a hiccup
 
 
+# A moderately-constrained prompt, not a trivial "reply OK" — that's exactly
+# what let nvidia/nemotron-3-super-120b-a12b:free look fine in a quick check
+# while failing on real usage (see KNOWN_UNSUITABLE). Deterministic answer so
+# pass/fail doesn't need a judge model: exact values are easy to check by hand.
+SMOKE_TEST_PROMPT = (
+    "Rules: reply with a JSON object matching {\"greeting\": string, \"count\": "
+    "integer}. greeting must be exactly \"hello\". count must be exactly 3. "
+    "Respond with ONLY the JSON object, no explanation, no markdown."
+)
+# If the response opens with one of these before any JSON, that's the model
+# narrating its reasoning into the answer instead of just answering --
+# the exact failure mode found live in nemotron-3-super-120b-a12b.
+REASONING_LEAK_PREFIXES = (
+    "we need", "let me", "i need to", "i should", "okay,", "ok,", "first,",
+    "the user wants", "thinking",
+)
+
+
+def _post_chat_completion(model_id, structured, api_key, timeout=30):
+    """POST one chat/completions call to OpenRouter. Returns the raw content string.
+
+    Split out from smoke_test() so tests can monkeypatch just the network
+    call, matching gateway.py's _post_chat pattern.
+    """
+    payload = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": SMOKE_TEST_PROMPT}],
+        "temperature": 0.1,
+    }
+    if structured == "json_schema":
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "smoke_test", "strict": True, "schema": {
+                "type": "object",
+                "properties": {"greeting": {"type": "string"},
+                                "count": {"type": "integer"}},
+                "required": ["greeting", "count"], "additionalProperties": False,
+            }},
+        }
+    else:
+        payload["response_format"] = {"type": "json_object"}
+
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {api_key}",
+                 "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    return body["choices"][0]["message"]["content"]
+
+
+def smoke_test(model_id, structured, api_key, timeout=30):
+    """Run one real call against `model_id`. Returns (passed, reason).
+
+    Catches gross failures a catalog score can't see: empty responses,
+    reasoning leaked into content instead of the answer, malformed JSON,
+    or the model simply not following an explicit instruction. Does NOT
+    judge writing quality/tone -- that still needs a human look before
+    promoting.
+    """
+    try:
+        content = _post_chat_completion(model_id, structured, api_key, timeout)
+    except Exception as e:
+        return False, f"request failed: {e}"
+
+    if not content or not content.strip():
+        return False, "empty response"
+
+    stripped = content.strip()
+    if any(stripped.lower().startswith(p) for p in REASONING_LEAK_PREFIXES):
+        return False, f"reasoning leaked into content: {stripped[:80]!r}"
+
+    cleaned = stripped
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0] if "\n" in cleaned else cleaned
+
+    try:
+        parsed = json.loads(cleaned)
+    except Exception as e:
+        return False, f"invalid JSON: {e} — raw: {stripped[:80]!r}"
+
+    if parsed.get("greeting") != "hello" or parsed.get("count") != 3:
+        return False, f"ignored instructions: got {parsed!r}"
+
+    return True, "ok"
+
+
 def rank_candidates(catalog, pinned_ids):
     out = []
     for mid, m in catalog.items():
@@ -162,8 +252,20 @@ def main():
 
     candidates = rank_candidates(catalog, pinned_or)
 
+    # Smoke-test only the top few (real API calls cost quota) -- a score is a
+    # catalog-metadata guess, this is the closest thing to ground truth we
+    # have without a human reading the output. Skipped entirely with no key
+    # (report/replacement fall back to score-only, matching prior behavior).
+    or_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if or_key:
+        for c in candidates[:3]:
+            passed, reason = smoke_test(c["id"], c["structured"], or_key)
+            c["smoke_test"], c["smoke_test_reason"] = passed, reason
+
     # --update: drop dead entries; replace dead openrouter entries in-place
-    # with the best unused candidate so cascade depth is preserved.
+    # with the best unused candidate so cascade depth is preserved. Prefers a
+    # smoke-tested-passing candidate over a purely rank-ordered one -- a live
+    # cascade replacement is a higher-stakes pick than a report suggestion.
     changed = False
     if update and dead:
         used = set(pinned_or)
@@ -177,16 +279,20 @@ def main():
                     continue
                 changed = True
                 if e["provider"] == "openrouter":
-                    repl = next((c for c in candidates if c["id"] not in used),
+                    repl = next((c for c in candidates
+                                 if c["id"] not in used and c.get("smoke_test") is True),
+                                None) or next((c for c in candidates if c["id"] not in used),
                                 None)
                     if repl:
                         used.add(repl["id"])
                         new_entries.append({"provider": "openrouter",
                                             "model": repl["id"],
                                             "structured": repl["structured"]})
+                        smoke_note = ("smoke-tested OK" if repl.get("smoke_test") is True
+                                     else "NOT smoke-tested — verify before trusting")
                         kept_notes.append(
                             f"replaced `{e['model']}` with `{repl['id']}` "
-                            f"({death[3]})")
+                            f"({death[3]}, {smoke_note})")
                     else:
                         kept_notes.append(f"removed `{e['model']}` ({death[3]}), "
                                           "no candidate available")
@@ -216,11 +322,18 @@ def main():
                   for i, p, m, why in unknown] + [""]
     lines.append("## Top new free candidates (not pinned)")
     lines.append("")
-    lines.append("| model | score | context | structured outputs |")
-    lines.append("|---|---|---|---|")
+    lines.append("| model | score | context | structured outputs | smoke test |")
+    lines.append("|---|---|---|---|---|")
     for c in candidates[:10]:
+        if "smoke_test" not in c:
+            smoke_col = "not tested"
+        elif c["smoke_test"]:
+            smoke_col = "✅ passed"
+        else:
+            smoke_col = f"❌ {c['smoke_test_reason']}"
         lines.append(f"| `{c['id']}` | {c['score']} | {c['context_length']:,} "
-                     f"| {'yes' if c['structured'] == 'json_schema' else 'no'} |")
+                     f"| {'yes' if c['structured'] == 'json_schema' else 'no'} "
+                     f"| {smoke_col} |")
     lines += ["", "_To promote a candidate, edit `models.json` — scoring: "
               "+2 coding-oriented name, +1 strict structured outputs, "
               "ties broken by context length. The score is a catalog-metadata "
@@ -239,7 +352,13 @@ def main():
     # A candidate scoring 0 is just "some free model exists" (true almost every
     # week on a rotating catalog) — not worth a human look. >=1 means it has at
     # least one real signal (coding-oriented name or strict structured outputs).
-    promising_candidate = bool(candidates) and candidates[0]["score"] >= 1
+    # A candidate that was smoke-tested and FAILED is excluded even if it
+    # scored well — that's exactly what happened with nemotron; score alone
+    # would have kept flagging it as promising forever.
+    promising_candidate = any(
+        c["score"] >= 1 and c.get("smoke_test") is not False
+        for c in candidates[:3]
+    )
 
     gh_out = os.environ.get("GITHUB_OUTPUT")
     if gh_out:

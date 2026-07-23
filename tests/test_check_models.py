@@ -123,3 +123,55 @@ class TestRankCandidates:
     def test_empty_catalog(self):
         candidates = check_models.rank_candidates({}, set())
         assert candidates == []
+
+
+class TestSmokeTest:
+    def test_passes_on_correct_json(self, monkeypatch):
+        monkeypatch.setattr(check_models, "_post_chat_completion",
+                            lambda *a, **k: '{"greeting": "hello", "count": 3}')
+        passed, reason = check_models.smoke_test("m", "json_object", "key")
+        assert passed is True
+        assert reason == "ok"
+
+    def test_strips_markdown_fence(self, monkeypatch):
+        monkeypatch.setattr(check_models, "_post_chat_completion",
+                            lambda *a, **k: '```json\n{"greeting": "hello", "count": 3}\n```')
+        passed, _ = check_models.smoke_test("m", "json_object", "key")
+        assert passed is True
+
+    def test_fails_on_empty_response(self, monkeypatch):
+        monkeypatch.setattr(check_models, "_post_chat_completion", lambda *a, **k: "")
+        passed, reason = check_models.smoke_test("m", "json_object", "key")
+        assert passed is False
+        assert "empty" in reason
+
+    def test_fails_on_reasoning_leak(self, monkeypatch):
+        # The exact nemotron-3-super-120b-a12b failure mode.
+        monkeypatch.setattr(
+            check_models, "_post_chat_completion",
+            lambda *a, **k: "We need to produce a JSON object with greeting and count...")
+        passed, reason = check_models.smoke_test("m", "json_object", "key")
+        assert passed is False
+        assert "reasoning" in reason
+
+    def test_fails_on_invalid_json(self, monkeypatch):
+        monkeypatch.setattr(check_models, "_post_chat_completion",
+                            lambda *a, **k: "not json at all")
+        passed, reason = check_models.smoke_test("m", "json_object", "key")
+        assert passed is False
+        assert "invalid JSON" in reason
+
+    def test_fails_on_ignored_instructions(self, monkeypatch):
+        monkeypatch.setattr(check_models, "_post_chat_completion",
+                            lambda *a, **k: '{"greeting": "hi", "count": 3}')
+        passed, reason = check_models.smoke_test("m", "json_object", "key")
+        assert passed is False
+        assert "ignored instructions" in reason
+
+    def test_fails_on_request_error(self, monkeypatch):
+        def raise_err(*a, **k):
+            raise ConnectionError("network down")
+        monkeypatch.setattr(check_models, "_post_chat_completion", raise_err)
+        passed, reason = check_models.smoke_test("m", "json_object", "key")
+        assert passed is False
+        assert "request failed" in reason
