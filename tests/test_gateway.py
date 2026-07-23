@@ -59,6 +59,18 @@ class TestLoadCascades:
             gemini_models = [e["model"] for e in cascades[intent] if e["name"].startswith("gemini/")]
             assert gemini_models == ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
+    def test_creative_cascade_exists_for_prose_use_cases(self):
+        # For social-caption/article-generation prompts, not code review.
+        # Distinct from code_review/general because ai-gateway's own
+        # code_review picks (cohere/north-mini-code:free) return empty
+        # content on caption-style prompts -- verified live.
+        cascades = gateway.load_cascades()
+        assert "creative" in cascades
+        models = [e["model"] for e in cascades["creative"]]
+        assert models[0] == "google/gemma-4-26b-a4b-it:free"
+        assert models[1] == "google/gemma-4-31b-it:free"
+        assert "openrouter/free" in models  # safety net
+
     def test_no_dead_qwen_model(self):
         cascades = gateway.load_cascades()
         for intent, entries in cascades.items():
