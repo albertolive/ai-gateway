@@ -39,7 +39,7 @@ class TestLoadCascades:
         models = [e["model"] for e in cr]
         assert "openrouter/free" in models
 
-    def test_gemini_model_is_3_6_flash(self):
+    def test_no_dead_gemini_2_0_model(self):
         # gemini-2.0-flash still resolves as a valid model ID (200 on
         # /v1beta/models/{id}) but carries 0 RPM/TPM/RPD quota on the free
         # tier as of July 2026 — confirmed dead via live 429s, not by
@@ -48,8 +48,16 @@ class TestLoadCascades:
         for intent, entries in cascades.items():
             for e in entries:
                 if "gemini" in e["name"]:
-                    assert e["model"] == "gemini-3.6-flash"
                     assert e["model"] != "gemini-2.0-flash"
+
+    def test_gemini_has_same_provider_fallback_tier(self):
+        # gemini-3.6-flash (5 RPM/20 RPD) is followed by gemini-3.5-flash-lite
+        # (15 RPM/500 RPD) so a Gemini daily-cap exhaustion falls over to a
+        # much larger same-provider quota before dropping to groq/openrouter.
+        cascades = gateway.load_cascades()
+        for intent in ("code_review", "general"):
+            gemini_models = [e["model"] for e in cascades[intent] if e["name"].startswith("gemini/")]
+            assert gemini_models == ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
     def test_no_dead_qwen_model(self):
         cascades = gateway.load_cascades()
