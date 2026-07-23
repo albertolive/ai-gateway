@@ -14,5 +14,3 @@ albertolive/longevity-dashboard
 #
 # Esdeveniments org (secrets set at org level — no per-repo setup needed)
 Esdeveniments/esdeveniments-frontend
-#
-# twinfoundation-community org (secrets set at org level — no per-repo setup needed)
