@@ -42,9 +42,15 @@ async function complete(prompt, { cascade = "general", system, temperature = 0.1
   const errors = [];
   for (const entry of entries) {
     const provider = providers[entry.provider];
-    if (!provider) continue;
+    if (!provider) {
+      errors.push(`${entry.provider}/${entry.model}: unknown provider '${entry.provider}'`);
+      continue;
+    }
     const apiKey = process.env[provider.key_env];
-    if (!apiKey) continue;
+    if (!apiKey) {
+      errors.push(`${entry.provider}/${entry.model}: ${provider.key_env} not set`);
+      continue;
+    }
 
     const messages = [
       ...(system ? [{ role: "system", content: system }] : []),

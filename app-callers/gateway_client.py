@@ -49,9 +49,13 @@ def complete(prompt, cascade="general", system=None, temperature=0.1, timeout=12
     for entry in entries:
         provider = providers.get(entry["provider"])
         if not provider:
+            errors.append(f"{entry['provider']}/{entry['model']}: "
+                          f"unknown provider '{entry['provider']}'")
             continue
         api_key = os.environ.get(provider["key_env"], "").strip()
         if not api_key:
+            errors.append(f"{entry['provider']}/{entry['model']}: "
+                          f"{provider['key_env']} not set")
             continue
 
         messages = ([{"role": "system", "content": system}] if system else [])
