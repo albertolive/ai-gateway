@@ -161,6 +161,15 @@ class TestSmokeTest:
         assert passed is False
         assert "invalid JSON" in reason
 
+    def test_fails_on_valid_json_non_object(self, monkeypatch):
+        # A bare array is valid JSON -- json.loads() succeeds -- but
+        # parsed.get(...) would crash on a list. Must fail cleanly, not raise.
+        monkeypatch.setattr(check_models, "_post_chat_completion",
+                            lambda *a, **k: "[1, 2, 3]")
+        passed, reason = check_models.smoke_test("m", "json_object", "key")
+        assert passed is False
+        assert "not an object" in reason
+
     def test_fails_on_ignored_instructions(self, monkeypatch):
         monkeypatch.setattr(check_models, "_post_chat_completion",
                             lambda *a, **k: '{"greeting": "hi", "count": 3}')

@@ -188,6 +188,9 @@ def smoke_test(model_id, structured, api_key, timeout=30):
     except Exception as e:
         return False, f"invalid JSON: {e} — raw: {stripped[:80]!r}"
 
+    if not isinstance(parsed, dict):
+        return False, f"valid JSON but not an object: {parsed!r}"
+
     if parsed.get("greeting") != "hello" or parsed.get("count") != 3:
         return False, f"ignored instructions: got {parsed!r}"
 
