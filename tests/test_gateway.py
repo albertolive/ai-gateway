@@ -39,13 +39,17 @@ class TestLoadCascades:
         models = [e["model"] for e in cr]
         assert "openrouter/free" in models
 
-    def test_gemini_model_is_2_0_flash(self):
+    def test_gemini_model_is_3_6_flash(self):
+        # gemini-2.0-flash still resolves as a valid model ID (200 on
+        # /v1beta/models/{id}) but carries 0 RPM/TPM/RPD quota on the free
+        # tier as of July 2026 — confirmed dead via live 429s, not by
+        # existence-check (see check_models.py note on this gap).
         cascades = gateway.load_cascades()
         for intent, entries in cascades.items():
             for e in entries:
                 if "gemini" in e["name"]:
-                    assert e["model"] == "gemini-2.0-flash"
-                    assert "gemini-3.5-flash" not in e["model"]
+                    assert e["model"] == "gemini-3.6-flash"
+                    assert e["model"] != "gemini-2.0-flash"
 
     def test_no_dead_qwen_model(self):
         cascades = gateway.load_cascades()

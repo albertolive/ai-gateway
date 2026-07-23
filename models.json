@@ -1,5 +1,5 @@
 {
-  "_comment": "Provider/cascade config. Edited by humans and by the model-watch bot PRs. structured: json_schema = strict structured outputs; json_object = schema embedded in prompt. Model IDs verified July 2026: openrouter cohere/north-mini-code:free and poolside/laguna-m.1:free confirmed live in catalog (qwen/qwen3-coder:free was removed and replaced); gemini-2.0-flash is the current valid Flash model on Google's OpenAI-compatible endpoint (no google/ prefix, gemini-3.5-flash does not exist); groq llama-3.3-70b-versatile is the current Groq free-tier Llama 70B model. deepseek-v4-flash confirmed current on DeepSeek's own OpenAI-compatible API (api-docs.deepseek.com) — deepseek-chat/deepseek-reasoner deprecate 2026-07-24.",
+  "_comment": "Provider/cascade config. Edited by humans and by the model-watch bot PRs. structured: json_schema = strict structured outputs; json_object = schema embedded in prompt. Model IDs verified July 2026: openrouter cohere/north-mini-code:free and poolside/laguna-m.1:free confirmed live in catalog (qwen/qwen3-coder:free was removed and replaced); gemini-3.6-flash is the current live Flash model on Google's OpenAI-compatible endpoint (no google/ prefix) — gemini-2.0-flash still resolves as a valid model ID but AI Studio shows 0 RPM/TPM/RPD quota on it (deprecated for new free-tier allocation, existence-check alone doesn't catch this — see check_models.py note), confirmed dead via live 429s across three repos in one session, gemini-3.6-flash verified live with real quota, structured json_schema output, and vision; groq llama-3.3-70b-versatile is the current Groq free-tier Llama 70B model. deepseek-v4-flash confirmed current on DeepSeek's own OpenAI-compatible API (api-docs.deepseek.com) — deepseek-chat/deepseek-reasoner deprecate 2026-07-24.",
   "providers": {
     "openrouter": {"url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY"},
     "gemini": {"url": "https://generativelanguage.googleapis.com/v1beta/openai", "key_env": "GEMINI_API_KEY"},
@@ -10,12 +10,12 @@
     "code_review": [
       {"provider": "openrouter", "model": "cohere/north-mini-code:free", "structured": "json_schema"},
       {"provider": "openrouter", "model": "poolside/laguna-m.1:free", "structured": "json_schema"},
-      {"provider": "gemini", "model": "gemini-2.0-flash", "structured": "json_schema"},
+      {"provider": "gemini", "model": "gemini-3.6-flash", "structured": "json_schema"},
       {"provider": "groq", "model": "llama-3.3-70b-versatile", "structured": "json_object"},
       {"provider": "openrouter", "model": "openrouter/free", "structured": "json_object"}
     ],
     "general": [
-      {"provider": "gemini", "model": "gemini-2.0-flash", "structured": "json_schema"},
+      {"provider": "gemini", "model": "gemini-3.6-flash", "structured": "json_schema"},
       {"provider": "groq", "model": "llama-3.3-70b-versatile", "structured": "json_object"},
       {"provider": "openrouter", "model": "openrouter/free", "structured": "json_object"}
     ],

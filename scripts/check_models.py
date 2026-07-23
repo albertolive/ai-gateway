@@ -62,7 +62,16 @@ def is_free(m):
 
 
 def model_exists(provider, model):
-    """Existence probe for gemini/groq. Returns True/False/None (unknown)."""
+    """Existence probe for gemini/groq. Returns True/False/None (unknown).
+
+    Known gap (found live, July 2026): this only checks that the model ID
+    resolves (200 on /v1beta/models/{id}) — it does NOT catch a model whose
+    ID is still valid but has been deprecated for new free-tier quota
+    allocation (0 RPM/TPM/RPD in AI Studio's rate-limit table). That's how
+    gemini-2.0-flash went undetected here while returning 429 on every real
+    call. A true fix needs a live completions call, not just an existence
+    check — not implemented, flagging for next iteration.
+    """
     try:
         if provider == "gemini":
             key = os.environ.get("GEMINI_API_KEY", "").strip()
