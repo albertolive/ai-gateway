@@ -69,10 +69,19 @@ jobs:
         if: always()
         run: cat model_watch_report.md >> "$GITHUB_STEP_SUMMARY" || true
 
-      # No changes but candidates exist: keep the report visible in the run
-      # summary. If you also want a weekly issue instead, uncomment:
-      # - name: Open attention issue
-      #   if: steps.check.outputs.attention == 'true' && steps.check.outputs.changed != 'true'
-      #   env:
-      #     GH_TOKEN: ${{ github.token }}
-      #   run: gh issue create --title "Model watch needs attention" --body-file model_watch_report.md
+      # Nothing died (no PR fired) but a new candidate scores well enough to
+      # be worth a look — open/update a single tracking issue rather than a
+      # new one every week. Stable title so it dedupes; the report itself
+      # (see check_models.py) carries the "verify live before promoting"
+      # caveat, catalog score is not a correctness check.
+      - name: Open or update candidate-review issue
+        if: steps.check.outputs.promising_candidate == 'true' && steps.check.outputs.changed != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          EXISTING=$(gh issue list --search 'in:title "Model watch: new candidate worth reviewing"' --state open --json number --jq '.[0].number')
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --body-file model_watch_report.md
+          else
+            gh issue create --title "Model watch: new candidate worth reviewing" --body-file model_watch_report.md
+          fi

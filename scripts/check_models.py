@@ -213,18 +213,30 @@ def main():
                      f"| {'yes' if c['structured'] == 'json_schema' else 'no'} |")
     lines += ["", "_To promote a candidate, edit `models.json` — scoring: "
               "+2 coding-oriented name, +1 strict structured outputs, "
-              "ties broken by context length._"]
+              "ties broken by context length. The score is a catalog-metadata "
+              "proxy, not a correctness check — it won't catch a model that "
+              "leaks reasoning into output or ignores response_format under "
+              "real prompts (verified live, July 2026: a high-scoring "
+              "coding-named candidate did exactly this). Test the candidate "
+              "against a real prompt from an actual cascade user before "
+              "promoting, not just this table._"]
 
     report = "\n".join(lines)
     with open("model_watch_report.md", "w", encoding="utf-8") as f:
         f.write(report)
     print(report)
 
+    # A candidate scoring 0 is just "some free model exists" (true almost every
+    # week on a rotating catalog) — not worth a human look. >=1 means it has at
+    # least one real signal (coding-oriented name or strict structured outputs).
+    promising_candidate = bool(candidates) and candidates[0]["score"] >= 1
+
     gh_out = os.environ.get("GITHUB_OUTPUT")
     if gh_out:
         with open(gh_out, "a", encoding="utf-8") as f:
             f.write(f"changed={'true' if changed else 'false'}\n")
             f.write(f"attention={'true' if dead else 'false'}\n")
+            f.write(f"promising_candidate={'true' if promising_candidate else 'false'}\n")
 
 
 if __name__ == "__main__":
