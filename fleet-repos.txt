@@ -14,3 +14,8 @@ albertolive/longevity-dashboard
 #
 # Esdeveniments org (secrets set at org level — no per-repo setup needed)
 Esdeveniments/esdeveniments-frontend
+Esdeveniments/cultural-agenda-sync
+Esdeveniments/esdeveniments-social-publisher
+#
+# Other repos using GitHub Models — needs code migration and ai-gateway caller
+albertolive/nowcast-cardedeu
