@@ -10,7 +10,7 @@
 #   ./set-secrets.sh --list             # show current secret status across fleet
 #
 # What it does:
-#   1. Org-level secrets on Esdeveniments + twinfoundation-community (covers all org repos)
+#   1. Org-level secrets on Esdeveniments (covers all org repos)
 #   2. Repo-level secrets on each personal repo in fleet-repos.txt
 #   3. Repo-level secrets on ai-gateway itself (for model-watch workflow)
 #
@@ -21,7 +21,7 @@
 set -euo pipefail
 
 GATEWAY_REPO="albertolive/ai-gateway"
-ORGS=("Esdeveniments" "twinfoundation-community")
+ORGS=("Esdeveniments")
 FLEET_FILE="$(dirname "$0")/fleet-repos.txt"
 
 # Secrets to manage: array of "name:label" pairs.
@@ -101,7 +101,7 @@ for org in "${ORGS[@]}"; do
     name="${entry%%=*}"
     value="${entry#*=}"
     [ -z "$value" ] && continue
-    if gh secret set "$name" --org "$org" --body "$value" 2>/dev/null; then
+    if gh secret set "$name" --org "$org" --visibility private --body "$value" 2>/dev/null; then
       echo "    ✅ $name"
     else
       echo "    ⚠️  $name (may need org admin access)"
@@ -109,17 +109,11 @@ for org in "${ORGS[@]}"; do
   done
 done
 
-# 2. Personal repos (per-repo, since personal accounts lack org-level secrets)
+# 2. Fleet repos (per-repo setup for reliability across org and personal accounts)
 while IFS= read -r repo || [ -n "$repo" ]; do
   [[ "$repo" =~ ^[[:space:]]*# ]] && continue
   repo=$(echo "$repo" | tr -d '[:space:]')
   [[ -z "$repo" ]] && continue
-  # Skip org repos — they're covered by org-level secrets above
-  owner=${repo%%/*}
-  if [[ " ${ORGS[*]} " == *" $owner "* ]]; then
-    echo "  $repo (org repo — covered by org-level secrets)"
-    continue
-  fi
   echo "  repo: $repo"
   for entry in "${SECRET_VALUES[@]}"; do
     name="${entry%%=*}"
