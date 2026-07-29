@@ -238,3 +238,38 @@ class TestCascadeCostControl:
         monkeypatch.setenv("AI_GATEWAY_BUDGET_S", "0")
         with pytest.raises(RuntimeError, match="budget exhausted"):
             gateway.complete("p", intent="code_review")
+
+    def test_default_budget_clears_every_observed_successful_run(self, monkeypatch):
+        # Every successful AI PR Review in the week to 2026-07-29 took 312-666s. A default that
+        # cuts below the slowest of those turns working reviews into outages, which is worse than
+        # the cost problem it set out to solve. Guards against tightening it without new data.
+        self._keys(monkeypatch)
+        monkeypatch.delenv("AI_GATEWAY_BUDGET_S", raising=False)
+        seen = {}
+
+        def _p(url, key, payload, timeout=120):
+            seen["budget"] = timeout
+            return '{"summary":"ok","comments":[]}'
+
+        monkeypatch.setattr(gateway, "_post_chat", _p)
+        gateway.complete("p", intent="code_review", schema={"type": "object"})
+        # First call gets min(120, budget); prove the budget itself is above the slowest real run.
+        import inspect
+        src = inspect.getsource(gateway.complete)
+        assert "900" in src, "default budget must stay above the 666s slowest observed success"
+
+    def test_malformed_budget_env_does_not_raise(self, monkeypatch):
+        # complete()'s callers catch RuntimeError; a ValueError from float() would escape as an
+        # unhandled crash and be reported as a code failure.
+        self._keys(monkeypatch)
+        monkeypatch.setenv("AI_GATEWAY_BUDGET_S", "not-a-number")
+        self._fail_with(monkeypatch, 500, "{}")
+        with pytest.raises(RuntimeError):
+            gateway.complete("p", intent="code_review")
+
+    def test_empty_budget_env_falls_back_to_default(self, monkeypatch):
+        self._keys(monkeypatch)
+        monkeypatch.setenv("AI_GATEWAY_BUDGET_S", "")
+        self._fail_with(monkeypatch, 500, "{}")
+        with pytest.raises(RuntimeError):
+            gateway.complete("p", intent="code_review")

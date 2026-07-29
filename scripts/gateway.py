@@ -89,17 +89,30 @@ def complete(prompt, system=None, intent="general", schema=None,
     If `schema` (a JSON Schema dict) is given, output is requested/validated
     as JSON and the parsed object is returned instead of raw text.
 
-    `budget_s` caps the WALL CLOCK for the whole cascade (default 300, or
+    `budget_s` caps the WALL CLOCK for the whole cascade (default 900, or
     AI_GATEWAY_BUDGET_S). Without it the worst case was unbounded: 7 providers x 2 attempts x a
     120s socket timeout is ~28 minutes on paper, and because urlopen's timeout applies per socket
     operation rather than to total elapsed time, one slow responder stretched a real run to 44
     minutes on 2026-07-29. On a private repo that is billable CI time spent discovering that every
     provider is down. The budget converts an open-ended stall into a bounded, reported failure.
+
+    900 is measured, not picked. Every SUCCESSFUL AI PR Review in the week to 2026-07-29 took
+    between 312s and 666s, so a tighter budget would have killed real work: a 300s default would
+    have failed all six. 900 clears the observed maximum by ~35% while still cutting the
+    pathological case from 44 minutes to 15. Lower it only against fresh timings.
     """
     cascade = CASCADES.get(intent, CASCADES["general"])
     errors = []
     if budget_s is None:
-        budget_s = float(os.environ.get("AI_GATEWAY_BUDGET_S", "300"))
+        # A malformed override must not raise out of here: complete()'s callers catch RuntimeError
+        # (review.py turns it into an outage comment), so a ValueError would escape as an unhandled
+        # crash and be reported as a code failure, which is the exact thing this file is fixing.
+        raw = os.environ.get("AI_GATEWAY_BUDGET_S", "")
+        try:
+            budget_s = float(raw) if raw.strip() else 900.0
+        except ValueError:
+            print(f"  ! ignoring invalid AI_GATEWAY_BUDGET_S={raw!r}, using 900s")
+            budget_s = 900.0
     started = time.monotonic()
     left = lambda: budget_s - (time.monotonic() - started)  # noqa: E731
 
