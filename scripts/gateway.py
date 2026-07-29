@@ -13,6 +13,7 @@ Verified July 2026:
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -54,6 +55,14 @@ def load_cascades(path=_CONFIG_PATH):
 CASCADES = load_cascades()
 
 
+# A 429 whose body names a DAILY allowance is not worth retrying: the quota resets tomorrow, not
+# in five seconds. Both caps observed on 2026-07-28 were of this kind ("Quota exceeded for metric
+# ... PerDay" from Gemini, "Rate limit exceeded: free-models-per-day" from OpenRouter), and the
+# retry spent a full extra request round-trip per dead provider to learn nothing. A per-MINUTE
+# limit is the opposite case and still gets its retry, because five seconds genuinely helps there.
+_DAILY_CAP = re.compile(r"per[-\s]?day|daily|\bRPD\b|free-models-per-day", re.I)
+
+
 def _post_chat(base_url, api_key, payload, timeout=120):
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
@@ -73,19 +82,36 @@ def _post_chat(base_url, api_key, payload, timeout=120):
 
 
 def complete(prompt, system=None, intent="general", schema=None,
-             schema_name="response", temperature=0.1, max_retries_per_provider=1):
+             schema_name="response", temperature=0.1, max_retries_per_provider=1,
+             budget_s=None):
     """Run prompt through the cascade. Returns (text, provider_name).
 
     If `schema` (a JSON Schema dict) is given, output is requested/validated
     as JSON and the parsed object is returned instead of raw text.
+
+    `budget_s` caps the WALL CLOCK for the whole cascade (default 300, or
+    AI_GATEWAY_BUDGET_S). Without it the worst case was unbounded: 7 providers x 2 attempts x a
+    120s socket timeout is ~28 minutes on paper, and because urlopen's timeout applies per socket
+    operation rather than to total elapsed time, one slow responder stretched a real run to 44
+    minutes on 2026-07-29. On a private repo that is billable CI time spent discovering that every
+    provider is down. The budget converts an open-ended stall into a bounded, reported failure.
     """
     cascade = CASCADES.get(intent, CASCADES["general"])
     errors = []
+    if budget_s is None:
+        budget_s = float(os.environ.get("AI_GATEWAY_BUDGET_S", "300"))
+    started = time.monotonic()
+    left = lambda: budget_s - (time.monotonic() - started)  # noqa: E731
 
     for provider in cascade:
         api_key = os.environ.get(provider["key_env"], "").strip()
         if not api_key:
             print(f"  skip {provider['name']}: {provider['key_env']} not set")
+            continue
+        if left() <= 0:
+            msg = f"{provider['name']}: skipped, {budget_s:.0f}s cascade budget exhausted"
+            print(f"  ! {msg}")
+            errors.append(msg)
             continue
 
         messages = []
@@ -117,7 +143,10 @@ def complete(prompt, system=None, intent="general", schema=None,
         for attempt in range(max_retries_per_provider + 1):
             print(f"-> {provider['name']} ({provider['model']}), attempt {attempt + 1}")
             try:
-                text = _post_chat(provider["url"], api_key, payload)
+                # Never let one call outlive the budget: a provider that streams slowly used to
+                # blow past the 120s socket timeout because that timeout is per read, not total.
+                text = _post_chat(provider["url"], api_key, payload,
+                                  timeout=max(1, min(120, left())))
                 if schema:
                     # Some models wrap JSON in markdown fences; strip them.
                     cleaned = text.strip()
@@ -134,10 +163,13 @@ def complete(prompt, system=None, intent="general", schema=None,
                 msg = f"{provider['name']} HTTP {e.code}: {detail}"
                 print(f"  ! {msg}")
                 errors.append(msg)
-                if e.code == 429 and attempt < max_retries_per_provider:
+                if e.code == 429 and _DAILY_CAP.search(detail):
+                    print("    daily allowance, not a burst limit -> next provider")
+                    break
+                if e.code == 429 and attempt < max_retries_per_provider and left() > 5:
                     time.sleep(5)
                     continue
-                break  # non-retryable or retries exhausted -> next provider
+                break  # non-retryable, retries exhausted, or no budget -> next provider
             except Exception as e:  # timeouts, bad JSON, network errors
                 msg = f"{provider['name']}: {type(e).__name__}: {e}"
                 print(f"  ! {msg}")

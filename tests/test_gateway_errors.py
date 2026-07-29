@@ -156,3 +156,85 @@ class TestFailoverCascade:
         msg = str(exc_info.value)
         assert "All providers" in msg
         assert "HTTP 500" in msg
+
+
+class TestCascadeCostControl:
+    """The cascade must not burn unbounded billable CI time discovering everything is down.
+
+    On 2026-07-29 one AI PR Review run took 44 minutes: 7 providers x 2 attempts, a 120s socket
+    timeout that applies per read rather than to total elapsed, and a 5s sleep before each retry.
+    On a private repo that is metered time spent learning nothing.
+    """
+
+    def _keys(self, monkeypatch):
+        for k in ("OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY"):
+            monkeypatch.setenv(k, "x")
+
+    def _fail_with(self, monkeypatch, code, body, sleep=0.0):
+        import io
+        import time as _t
+        calls = []
+
+        def _p(url, key, payload, timeout=120):
+            calls.append(timeout)
+            if sleep:
+                _t.sleep(sleep)
+            raise urllib.error.HTTPError(url, code, "err", {}, io.BytesIO(body.encode()))
+
+        monkeypatch.setattr(gateway, "_post_chat", _p)
+        return calls
+
+    def test_daily_cap_is_not_retried(self, monkeypatch):
+        # A daily allowance resets tomorrow, so sleeping 5s and asking again is pure waste.
+        self._keys(monkeypatch)
+        calls = self._fail_with(
+            monkeypatch, 429,
+            '{"error":{"message":"Rate limit exceeded: free-models-per-day"}}')
+        with pytest.raises(RuntimeError):
+            gateway.complete("p", intent="code_review", budget_s=300)
+        cascade = gateway.load_cascades()["code_review"]
+        assert len(calls) == len(cascade), "exactly one attempt per provider, no retries"
+
+    def test_gemini_per_day_wording_also_detected(self, monkeypatch):
+        # Google phrases it differently from OpenRouter; both are daily caps.
+        self._keys(monkeypatch)
+        calls = self._fail_with(
+            monkeypatch, 429,
+            '{"error":{"message":"Quota exceeded for metric: GenerateRequestsPerDay"}}')
+        with pytest.raises(RuntimeError):
+            gateway.complete("p", intent="code_review", budget_s=300)
+        assert len(calls) == len(gateway.load_cascades()["code_review"])
+
+    def test_burst_limit_still_retries(self, monkeypatch):
+        # The opposite case: a per-minute limit genuinely clears, so the retry is worth keeping.
+        self._keys(monkeypatch)
+        calls = self._fail_with(
+            monkeypatch, 429,
+            '{"error":{"message":"Rate limit exceeded: 20 per minute"}}')
+        monkeypatch.setattr(gateway.time, "sleep", lambda s: None)
+        with pytest.raises(RuntimeError):
+            gateway.complete("p", intent="code_review", budget_s=300)
+        assert len(calls) == 2 * len(gateway.load_cascades()["code_review"])
+
+    def test_budget_bounds_a_slow_cascade(self, monkeypatch):
+        import time as _t
+        self._keys(monkeypatch)
+        self._fail_with(monkeypatch, 500, "{}", sleep=0.3)
+        t0 = _t.monotonic()
+        with pytest.raises(RuntimeError, match="budget exhausted"):
+            gateway.complete("p", intent="code_review", budget_s=0.5)
+        assert _t.monotonic() - t0 < 3, "the budget must actually stop the cascade"
+
+    def test_per_call_timeout_never_exceeds_remaining_budget(self, monkeypatch):
+        # Otherwise one slow provider can outlive the whole budget on its own.
+        self._keys(monkeypatch)
+        calls = self._fail_with(monkeypatch, 500, "{}")
+        with pytest.raises(RuntimeError):
+            gateway.complete("p", intent="code_review", budget_s=10)
+        assert calls and max(calls) <= 10
+
+    def test_budget_default_is_env_overridable(self, monkeypatch):
+        self._keys(monkeypatch)
+        monkeypatch.setenv("AI_GATEWAY_BUDGET_S", "0")
+        with pytest.raises(RuntimeError, match="budget exhausted"):
+            gateway.complete("p", intent="code_review")
