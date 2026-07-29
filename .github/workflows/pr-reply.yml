@@ -12,6 +12,11 @@ on:
         required: false
       GROQ_API_KEY:
         required: false
+      # Paid last-resort tail of the code_review cascade. Optional: gateway.py skips any provider
+      # whose key_env is unset, so a repo that does not pass this simply never reaches DeepSeek and
+      # never spends. Passing it IS the opt-in.
+      DEEPSEEK_API_KEY:
+        required: false
 
 # Cancel superseded reply runs for the same PR (prevents duplicate
 # responses when someone rapid-fires replies in a thread)
@@ -46,4 +51,5 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: python3 gateway/scripts/reply.py

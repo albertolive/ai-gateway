@@ -111,7 +111,9 @@ text = complete("Summarize this forecast: ...")                    # free tier, 
 text = complete("...", cascade="deepseek_cheap")                   # paid, needs DEEPSEEK_API_KEY
 ```
 
-Because the app only ever references a cascade name, swapping the underlying model, adding a new provider, or retiring a dead free-tier model is a one-line edit to `models.json` in this repo — every app picks it up on its next call, with zero app-code changes. This is also how you add a paid provider like DeepSeek without going through OpenRouter's markup: `providers.deepseek` points straight at `api.deepseek.com`, billed on your own DeepSeek account, and the `deepseek_cheap` cascade pins `deepseek-v4-flash`. Paid cascades are never mixed into `general`/`code_review`, so CI (and any app defaulting to `general`) never triggers deepseek spend by accident — it's opt-in per call.
+Because the app only ever references a cascade name, swapping the underlying model, adding a new provider, or retiring a dead free-tier model is a one-line edit to `models.json` in this repo — every app picks it up on its next call, with zero app-code changes. This is also how you add a paid provider like DeepSeek without going through OpenRouter's markup: `providers.deepseek` points straight at `api.deepseek.com`, billed on your own DeepSeek account, and the `deepseek_cheap` cascade pins `deepseek-v4-flash`.
+
+**Paid providers and accidental spend.** `general` stays free-tier only. `code_review` now ends in a paid DeepSeek step, reached only after every free tier has failed. That is still opt-in, because the opt-in mechanism is the KEY, not the cascade: `gateway.py` skips any provider whose `key_env` is unset, so a repo that does not pass `DEEPSEEK_API_KEY` never reaches that step and never spends a cent. A repo that does pass it has said yes on purpose. The tail exists because the all-free cascade genuinely ran out on 2026-07-28 (Gemini RPD cap, Groq 403, OpenRouter free-models-per-day) and left a PR with no review at all — and PR review is low-volume, so the worst case is a few cents on the days the free tier is exhausted.
 
 ## Design notes (why it's built this way)
 

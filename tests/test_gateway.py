@@ -118,3 +118,30 @@ class TestProviders:
     def test_deepseek_provider_configured(self):
         assert gateway.PROVIDERS["deepseek"]["url"] == "https://api.deepseek.com"
         assert gateway.PROVIDERS["deepseek"]["key_env"] == "DEEPSEEK_API_KEY"
+
+
+class TestPaidTail:
+    """The code_review cascade ends in a paid provider, reached only when the free tier is gone.
+
+    Safe by construction rather than by policy: gateway.complete() skips any provider whose
+    key_env is unset, so a repo that never passes DEEPSEEK_API_KEY never reaches this step and
+    never spends. Passing the secret is the opt-in.
+    """
+
+    def test_deepseek_is_last_not_first(self):
+        cr = gateway.load_cascades()["code_review"]
+        keys = [e["key_env"] for e in cr]
+        assert keys[-1] == "DEEPSEEK_API_KEY", "the paid step must be the LAST resort"
+        assert keys.count("DEEPSEEK_API_KEY") == 1, "one paid step, not a paid cascade"
+
+    def test_free_tier_still_tried_first(self):
+        cr = gateway.load_cascades()["code_review"]
+        # Everything before the paid tail is a free-tier provider.
+        assert all(e["key_env"] != "DEEPSEEK_API_KEY" for e in cr[:-1])
+        assert len(cr) >= 6, "the free cascade must not have been shortened to reach paid sooner"
+
+    def test_general_cascade_stays_free(self):
+        # `general` is the default for any app that does not name a cascade, so a paid step here
+        # would bill every unrelated caller.
+        gen = gateway.load_cascades()["general"]
+        assert all(e["key_env"] != "DEEPSEEK_API_KEY" for e in gen)

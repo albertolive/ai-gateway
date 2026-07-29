@@ -176,3 +176,66 @@ class TestValidateComments:
         ]
         valid = review.validate_comments(comments, added)
         assert len(valid) == 0
+
+
+# ---------------------------------------------------------------------------
+# cascade exhaustion (provider outage) must not read as a code failure
+# ---------------------------------------------------------------------------
+
+class TestCascadeExhaustion:
+    """An exhausted cascade is an outage, not a verdict on the diff.
+
+    It used to exit 1, putting a red X on the PR labelled "AI PR Review — failed", which is
+    indistinguishable at a glance from a review that found a real problem. meteo-brief #79 (the
+    forum-free cutover) merged with that gate red because the whole free tier capped at once.
+    """
+
+    def _run(self, monkeypatch, raise_on_post=False):
+        posted = {}
+
+        def fake_complete(*a, **k):
+            raise RuntimeError(
+                "All providers in the cascade failed or were skipped:\n"
+                "  - gemini/gemini-3.6-flash HTTP 429: quota\n"
+                "  - groq/llama-3.3-70b-versatile HTTP 403: error code: 1010"
+            )
+
+        def fake_gh_api(path, token, payload=None, method=None):
+            if raise_on_post:
+                raise RuntimeError("GitHub rejected the comment")
+            posted["path"], posted["body"] = path, (payload or {}).get("body", "")
+            return {}
+
+        monkeypatch.setattr(review.gateway, "complete", fake_complete)
+        monkeypatch.setattr(review, "gh_api", fake_gh_api)
+        monkeypatch.setattr(review, "last_reviewed_sha", lambda *a, **k: None)
+        for k, v in {
+            "GH_TOKEN": "t", "GITHUB_REPOSITORY": "o/r",
+            "PR_NUMBER": "79", "COMMIT_SHA": "abc123", "TARGET_DIR": "",
+        }.items():
+            monkeypatch.setenv(k, v)
+        return posted
+
+    def test_exits_zero_and_explains_on_the_pr(self, monkeypatch, tmp_path, capsys):
+        diff = tmp_path / "pr_diff.txt"
+        diff.write_text("--- a/x.py\n+++ b/x.py\n@@ -1 +1,2 @@\n+import os\n")
+        monkeypatch.setenv("PR_DIFF_PATH", str(diff))
+        posted = self._run(monkeypatch)
+
+        review.main()  # must NOT raise SystemExit
+
+        assert "/issues/79/comments" in posted["path"]
+        assert "did not run" in posted["body"]
+        # The comment must never imply the code was looked at and found clean.
+        assert "not been reviewed" in posted["body"]
+        assert "outage" in posted["body"]
+        # And the run is annotated so it is visible in the Actions UI too.
+        assert "::warning" in capsys.readouterr().out
+
+    def test_a_failed_comment_post_still_exits_zero(self, monkeypatch, tmp_path):
+        # If GitHub also rejects the comment we must not turn an outage into a hard failure.
+        diff = tmp_path / "pr_diff.txt"
+        diff.write_text("--- a/x.py\n+++ b/x.py\n@@ -1 +1,2 @@\n+import os\n")
+        monkeypatch.setenv("PR_DIFF_PATH", str(diff))
+        self._run(monkeypatch, raise_on_post=True)
+        review.main()

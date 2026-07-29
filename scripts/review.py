@@ -254,11 +254,38 @@ def main():
                             "the commits pushed since your last review]")
     prompt = "\n\n".join(prompt_parts)
 
-    # 3. Model call through the cascade
-    data, provider = gateway.complete(
-        prompt, system=SYSTEM_PROMPT, intent="code_review",
-        schema=REVIEW_SCHEMA, schema_name="pr_review",
-    )
+    # 3. Model call through the cascade.
+    #
+    # An exhausted cascade is an OUTAGE, not a finding about the code. It used to exit 1, which
+    # put a red X on the PR that said "AI PR Review / review — failed": indistinguishable at a
+    # glance from a review that found something, and it trained everyone to ignore the check.
+    # Seen on meteo-brief #79, where the whole free tier was capped at once (gemini RPD, groq
+    # 403, openrouter free-models-per-day) and the cutover PR merged with the gate red.
+    #
+    # So: say so on the PR itself, where the person deciding to merge is looking, annotate the
+    # run as a warning, and exit 0. The check going green here means "no review ran", which the
+    # comment states plainly — it never fabricates an approval.
+    try:
+        data, provider = gateway.complete(
+            prompt, system=SYSTEM_PROMPT, intent="code_review",
+            schema=REVIEW_SCHEMA, schema_name="pr_review",
+        )
+    except RuntimeError as e:
+        detail = str(e)
+        print(f"::warning title=AI review did not run::{detail.splitlines()[0]}")
+        body = (
+            "### AI review did not run\n\n"
+            "Every provider in the cascade was unavailable, so **this PR has not been "
+            "reviewed** — this is a provider outage, not a verdict on the code.\n\n"
+            f"<details><summary>Why</summary>\n\n```\n{detail[:1500]}\n```\n</details>\n\n"
+            "<sub>Re-run the job once quota resets, or review by hand.</sub>"
+        )
+        try:
+            gh_api(f"/repos/{repo}/issues/{pr}/comments", token, {"body": body})
+            print("Posted an outage comment on the PR.")
+        except Exception as post_err:  # noqa: BLE001 - never mask the original outage
+            print(f"Could not post the outage comment: {post_err}")
+        return
 
     comments = validate_comments(data.get("comments", []), added)
     summary = (data.get("summary") or "Automated review complete.").strip()
