@@ -39,10 +39,11 @@ jobs:
         id: check
         env:
           # Optional: set these as repo secrets in ai-gateway to also
-          # verify the Gemini and Groq models (skipped otherwise).
+          # verify the Gemini, Groq, and Vercel models (skipped otherwise).
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
         run: python3 scripts/check_models.py --update
 
       - name: Open or update bot PR

@@ -30,6 +30,7 @@ SECRET_NAMES=(
   "OPENROUTER_API_KEY:OpenRouter API key (sk-or-...)"
   "GEMINI_API_KEY:Google AI Studio API key (AIza...)"
   "GROQ_API_KEY:Groq API key (gsk_...)"
+  "AI_GATEWAY_API_KEY:Vercel AI Gateway API key (optional, press Enter to skip)"
   "CONTEXT7_API_KEY:Context7 API key (optional, press Enter to skip)"
 )
 
@@ -48,7 +49,7 @@ if [ "${1:-}" = "--list" ]; then
   echo "=== Org-level secrets ==="
   for org in "${ORGS[@]}"; do
     echo -n "$org: "
-    gh secret list --org "$org" 2>&1 | grep -E 'OPENROUTER|GEMINI|GROQ|CONTEXT7' | tr '\n' ' ' || echo "(none or no access)"
+    gh secret list --org "$org" 2>&1 | grep -E 'OPENROUTER|GEMINI|GROQ|CONTEXT7|AI_GATEWAY' | tr '\n' ' ' || echo "(none or no access)"
     echo
   done
   echo
@@ -63,12 +64,12 @@ if [ "${1:-}" = "--list" ]; then
       continue
     fi
     echo -n "$repo: "
-    gh secret list -R "$repo" 2>&1 | grep -E 'OPENROUTER|GEMINI|GROQ|CONTEXT7' | tr '\n' ' ' || echo "(none)"
+    gh secret list -R "$repo" 2>&1 | grep -E 'OPENROUTER|GEMINI|GROQ|CONTEXT7|AI_GATEWAY' | tr '\n' ' ' || echo "(none)"
     echo
   done < "$FLEET_FILE"
   echo
   echo -n "$GATEWAY_REPO: "
-  gh secret list -R "$GATEWAY_REPO" 2>&1 | grep -E 'OPENROUTER|GEMINI|GROQ|CONTEXT7' | tr '\n' ' ' || echo "(none)"
+  gh secret list -R "$GATEWAY_REPO" 2>&1 | grep -E 'OPENROUTER|GEMINI|GROQ|CONTEXT7|AI_GATEWAY' | tr '\n' ' ' || echo "(none)"
   echo
   exit 0
 fi

@@ -1,0 +1,117 @@
+# AI Gateway architecture
+
+## Goal
+
+One place to add, remove, or swap a model or provider (free or paid), and every
+project that uses AI follows automatically — with no per-repo edits.
+
+This exists because of a real failure: GitHub Models retired on 2026-07-30 and
+every repo that had hardcoded its endpoint/model/key had to be touched by hand.
+The gateway exists so that never happens again.
+
+## The single principle
+
+A repo names an **intent** (a cascade), never a provider, model ID, or key.
+
+```
+complete(prompt, cascade="general")     # runtime client
+POST /api/chat/completions {model:"general"}   # hosted endpoint
+```
+
+Everything below that line — which provider, which model, which key, retries,
+failover, quota handling — is the gateway's job. Repos that hardcode a provider
+or model ID are a bug; a CI check should fail them (Phase 3).
+
+## The two tiers
+
+The gateway centralizes **config and failover logic**. It does not require
+routing every call through a running server. There are two delivery modes, both
+backed by the same `models.json`:
+
+| | Tier A — client | Tier B — hosted endpoint |
+|---|---|---|
+| What | Vendored client (`app-callers/`) reads `models.json` and calls providers directly with the repo's own keys | A small OpenAI-compatible service holds all keys + `models.json`; repos call it with one gateway key |
+| Keys | Distributed per repo (`set-secrets.sh`) | Central (one place) |
+| Model swap | 1 edit in `models.json` | 1 edit in `models.json` |
+| Provider/key change | Edit + distribute key | Edit gateway only |
+| Latency | No extra hop | One extra hop |
+| Infra | None | One serverless function |
+
+**Decision: Tier B is the end-state** ("centralize as much as possible").
+Tier A remains for repos that already vendor the client and for CI (GitHub
+Actions workflows, which are effectively a hosted gateway already).
+
+## Hosted gateway (Tier B) — on Vercel Hobby
+
+The endpoint is a single stdlib Python function at `api/chat/completions.py`
+(reuses `scripts/gateway.py` unchanged), deployed to Vercel's free Hobby tier.
+
+Why Vercel Hobby (verified against Vercel docs, 2026-08):
+
+- Python `/api` file-based functions are supported, including the stdlib
+  `BaseHTTPRequestHandler` pattern — no FastAPI/Flask, no supply-chain surface.
+- Hobby max function duration is **300s (5 min)**, 2 GB RAM, 4.5 MB payload,
+  auto-scaling. Enough for the cascade re-tuned below.
+- Deployment is `git push` → Vercel auto-deploy, so "edit `models.json` and
+  push" is the whole release process.
+
+### Contract
+
+- `POST /api/chat/completions`, OpenAI chat-completions shape.
+- `model` field = **cascade name** (`general`, `code_review`, `creative`,
+  `vercel`, `deepseek_cheap`, …). Unknown cascade → `400` listing valid names.
+- `messages` = system + user/assistant turns (flattened into one prompt).
+- Auth: `Authorization: Bearer $GATEWAY_TOKEN`.
+- Success: `200` with `choices[0].message.content` and `model` = the provider
+  that actually served the request (for observability).
+- Failure: `401` bad token, `400` bad body / unknown cascade, `502` all
+  providers failed.
+
+### Environment (all held in the Vercel project, never in repos)
+
+| Variable | Purpose |
+|---|---|
+| `GATEWAY_TOKEN` | Inbound auth (repos send it as the bearer token) |
+| `OPENROUTER_API_KEY` | OpenRouter provider |
+| `GEMINI_API_KEY` | Google AI Studio provider |
+| `GROQ_API_KEY` | Groq provider |
+| `DEEPSEEK_API_KEY` | DeepSeek provider |
+| `AI_GATEWAY_API_KEY` | Vercel AI Gateway provider (comma-separated keys = multi-account failover) |
+| `AI_GATEWAY_BUDGET_S` | Cascade wall-clock budget, capped at 280s in the server |
+
+### Vercel free-tier constraint
+
+Hobby hard-caps a single invocation at 300s. The server therefore caps the
+cascade budget at **280s** (CI keeps its measured 900s budget; the runtime path
+must fail fast rather than stall a request). Per-provider socket timeouts are
+already bounded by the remaining budget in `gateway.py`.
+
+### What it does NOT do yet (deliberately scoped out)
+
+- Streaming responses.
+- Structured-output passthrough (`response_format` / JSON schema) — the cascade
+  supports schema internally for CI, but the hosted endpoint returns text only.
+- Central spend/observability dashboard (Vercel function logs + the `model`
+  field in each response are the first cut).
+
+## Rollout
+
+- **Phase 0** — harden the fleet audit (grep the "no runtime AI" repos for
+  provider/key references).
+- **Phase 1** — enforce the cascade-first contract in every consumer; migrate
+  the three drifters (meteo-brief, longevity-dashboard, career-ops) off their
+  own provider tables; fix the provider-hardcoding consumers (e.g.
+  social-publisher's `select(.provider=="openrouter")`).
+- **Phase 2** — deploy the hosted endpoint; cut repos over to one
+  `GATEWAY_TOKEN`; move provider keys out of repos into the Vercel project.
+- **Phase 3** — write the ADR + add a CI check that fails any repo hardcoding a
+  provider/model/key, so the drift cannot return.
+
+## Pros / cons (summary)
+
+- **Pros:** model/provider/keys in one place; failover logic written once;
+  `model-watch` keeps models current automatically; repos become dumb clients;
+  key rotation no longer touches repos.
+- **Cons:** a running service (single point of failure, one hop of latency,
+  all keys in one place); Hobby's 300s cap forces a fast-fail cascade on the
+  runtime path; streaming and structured-output passthrough are not yet built.

@@ -26,6 +26,10 @@ The cascade (in `scripts/gateway.py`) tries free providers in order and fails ov
 
 > **Model IDs are verified, not assumed.** All IDs above were checked against live provider catalogs on July 22, 2026. `cohere/north-mini-code:free` and `poolside/laguna-m.1:free` are confirmed present in the OpenRouter catalog; `gemini-2.0-flash` is the current valid Flash model on Google's OpenAI-compatible endpoint (no `google/` prefix). The model-watch workflow keeps this current automatically (see below).
 
+**Vercel AI Gateway** is an optional provider behind `AI_GATEWAY_API_KEY`: one key, hundreds of models, no token markup. Its free model `poolside/laguna-s-2.1-free` is a late failover tier in `code_review` and `general` (reached only after OpenRouter/Gemini/Groq are exhausted), and a dedicated `vercel` cascade (free → paid `google/gemini-3.6-flash`) serves `llm-task.yml` (`task_intent: vercel`) and the app callers (`cascade="vercel"`). Paid Vercel models bill your Vercel account, so passing the key is the opt-in.
+
+**Multiple accounts.** Any provider's key env var accepts several comma- or whitespace-separated keys — e.g. `AI_GATEWAY_API_KEY="acct1,acct2"` — and the gateway fails over through them in order. This is how you spread load across several Vercel accounts, each drawing on its own monthly credit pool: when one account's rate limit or credits are exhausted the next key is tried before moving to the next model/provider.
+
 The cascade order lives in **`models.json`** (not code), and a third workflow keeps it current:
 
 - **`model-watch.yml`** — every Monday (plus on demand) it queries the live provider catalogs, and if a pinned model was removed or stopped being free, it swaps in the best-ranked replacement and opens a bot PR with a full report — including new free models worth promoting. You stay current by merging a PR, not by reading changelogs.
@@ -35,19 +39,20 @@ Scripts are **stdlib-only Python** — no `pip install`, no supply-chain surface
 ## Setup
 
 1. **Create the repo.** Push this directory to `github.com/<you>/ai-gateway`. Public is simplest. If private: Settings → Actions → General → Access → *Accessible from repositories owned by \<you/org\>*.
-2. **Replace the placeholder.** Search for `YOUR_GITHUB_USERNAME_OR_ORG` in `.github/workflows/*.yml`, `caller-templates/*.yml`, and `deploy-callers.sh`. Also, in all three reusable workflows (`pr-review.yml`, `pr-reply.yml`, `llm-task.yml`), change the gateway checkout `ref: main` to `ref: v1.0.0` (or your tagged release) so scripts are pinned along with the workflow — **never deploy with `ref: main`, it's the exact supply-chain anti-pattern this tool is designed to avoid**.
+2. **Replace the placeholder.** Search for `YOUR_GITHUB_USERNAME_OR_ORG` in `.github/workflows/*.yml`, `caller-templates/*.yml`, and `deploy-callers.sh`. Also, in all three reusable workflows (`pr-review.yml`, `pr-reply.yml`, `llm-task.yml`), change the gateway checkout `ref: main` to `ref: v1.2.0` (or your tagged release) so scripts are pinned along with the workflow — **never deploy with `ref: main`, it's the exact supply-chain anti-pattern this tool is designed to avoid**.
 3. **Get free API keys** (no card needed for any):
    - OpenRouter: https://openrouter.ai/keys
    - Google AI Studio: https://aistudio.google.com/apikey
    - Groq: https://console.groq.com/keys
-4. **Store the secrets** as `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`:
+   - Vercel AI Gateway: https://vercel.com/ai-gateway (optional — one free model, plus paid models billed on your Vercel account)
+4. **Store the secrets** as `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `AI_GATEWAY_API_KEY`:
    - **Org repos:** Organization Settings → Secrets and variables → Actions → org-level secrets, scoped to the repos you want. Set once, done.
    - **Personal repos:** no account-level secrets exist, so set per repo: `gh secret set OPENROUTER_API_KEY -R you/repo --body "sk-or-..."` (loop over repos, or let `deploy-callers.sh` remind you).
 5. **Tag a release.** Callers must pin a tag, never `@main`:
    ```bash
-   git tag v1.0.0 && git push origin v1.0.0
+   git tag v1.2.0 && git push origin v1.2.0
    ```
-   Then verify all three reusable workflows use `ref: v1.0.0` in their gateway checkout step (step 2 covers this).
+   Then verify all three reusable workflows use `ref: v1.2.0` in their gateway checkout step (step 2 covers this).
 6. **Add `.gitignore`.** The repo includes a `.gitignore` that excludes `__pycache__/`, generated CI outputs (`model_watch_report.md`, `pr_diff.txt`, `gateway_output.*`, etc.), and secret files. Don't track these — `model_watch_report.md` is a generated output of `check_models.py`, not a source file. If it's already tracked in a remote, untrack it with `git rm --cached model_watch_report.md`.
 7. **Enable model-watch bot PRs** (one-time, in the `ai-gateway` repo): Settings → Actions → General → Workflow permissions → check *Allow GitHub Actions to create and approve pull requests*. Optionally add the three API keys as repo secrets here too, so the watcher can also verify the Gemini and Groq models (it verifies OpenRouter without any key).
 8. **Deploy callers.** Edit `fleet-repos.txt` (one repo per line, `owner/repo` format), then run `./deploy-callers.sh` (needs `gh auth refresh -s workflow`). The script reads the fleet file and pushes the caller workflow to each repo.
@@ -65,9 +70,9 @@ Three scripts manage the entire fleet from this repo. All read `fleet-repos.txt`
 
 **Lifecycle of a gateway upgrade:**
 1. Edit code in `ai-gateway`, commit, push
-2. `git tag v1.1.0 && git push origin v1.1.0`
-3. `./update-callers.sh v1.1.0` — bumps all fleet repos to the new tag
-4. `./update-callers.sh v1.1.0 --dry-run` to preview before pushing
+2. `git tag v1.2.0 && git push origin v1.2.0`
+3. `./update-callers.sh v1.2.0` — bumps all fleet repos to the new tag
+4. `./update-callers.sh v1.2.0 --dry-run` to preview before pushing
 
 **Adding a new repo to the fleet:**
 1. Add it to `fleet-repos.txt`
@@ -86,7 +91,7 @@ Tests live in `tests/` with a shared `conftest.py` that adds `scripts/` to the p
 
 ## Upgrading
 
-Edit centrally, tag `v1.1.0`, then bump the tag in callers when ready. Nothing breaks mid-flight because callers pin tags.
+Edit centrally, tag `v1.2.0`, then bump the tag in callers when ready. Nothing breaks mid-flight because callers pin tags.
 
 ## Customizing
 
@@ -109,6 +114,7 @@ The gateway isn't limited to GitHub Actions. `models.json` at the repo root is t
 from gateway_client import complete
 text = complete("Summarize this forecast: ...")                    # free tier, cascade="general"
 text = complete("...", cascade="deepseek_cheap")                   # paid, needs DEEPSEEK_API_KEY
+text = complete("...", cascade="vercel")                          # Vercel AI Gateway, needs AI_GATEWAY_API_KEY
 ```
 
 Because the app only ever references a cascade name, swapping the underlying model, adding a new provider, or retiring a dead free-tier model is a one-line edit to `models.json` in this repo — every app picks it up on its next call, with zero app-code changes. This is also how you add a paid provider like DeepSeek without going through OpenRouter's markup: `providers.deepseek` points straight at `api.deepseek.com`, billed on your own DeepSeek account, and the `deepseek_cheap` cascade pins `deepseek-v4-flash`.
@@ -120,6 +126,27 @@ Because the app only ever references a cascade name, swapping the underlying mod
 Two changes bound it. The budget stops the cascade and reports which providers it never reached, and a 429 whose body names a DAILY allowance is no longer retried: that quota resets tomorrow, not in five seconds, so the retry was a guaranteed-useless extra round trip per dead provider. A per-MINUTE limit still gets its retry, because there five seconds genuinely helps. Measured on a fully-capped cascade: **1.8s instead of ~38s**.
 
 The 900s default is measured rather than picked: every successful review in the week to 2026-07-29 took 312-666s, so a tighter budget would have killed real work (300s would have failed all six). It clears the observed maximum by ~35% and still cuts the pathological case from 44 minutes to 15. The tail exists because the all-free cascade genuinely ran out on 2026-07-28 (Gemini RPD cap, Groq 403, OpenRouter free-models-per-day) and left a PR with no review at all — and PR review is low-volume, so the worst case is a few cents on the days the free tier is exhausted.
+
+## Hosted gateway (one endpoint, one key)
+
+`api/chat/completions.py` is a stdlib-only Vercel function that exposes the whole cascade as an OpenAI-compatible endpoint, so repos don't even vendor a client — they hold ONE gateway key and point their OpenAI SDK at ONE URL. All provider keys live centrally in the Vercel project; a repo never sees them.
+
+```bash
+# repo code — note: `model` is the CASCADE name, not a provider model id
+curl -s https://<gateway>/api/chat/completions \
+  -H "Authorization: Bearer $GATEWAY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"general","messages":[{"role":"user","content":"Summarize ..."}]}'
+```
+
+- `model` = cascade name (`general`, `code_review`, `creative`, `vercel`, `deepseek_cheap`). Unknown cascade → `400`.
+- `Authorization: Bearer $GATEWAY_TOKEN` is the only credential a repo holds.
+- The response is OpenAI chat-completions shaped; its `model` field reports the provider that actually served the request.
+- Deploy: `git push` → Vercel auto-deploys this repo. Set these env vars in the Vercel project (never in repos): `GATEWAY_TOKEN`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `AI_GATEWAY_API_KEY` (comma-separated = multiple accounts).
+- Vercel Hobby caps a function at 300s, so the server caps the cascade at 280s (CI keeps its 900s budget).
+- Run locally: `GATEWAY_TOKEN=... ./scripts/serve.py`.
+
+See `docs/architecture.md` for the full spec and rollout plan.
 
 ## Design notes (why it's built this way)
 

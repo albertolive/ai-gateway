@@ -13,6 +13,7 @@ Catalog endpoints (all verified July 2026):
   supported_parameters (e.g. "structured_outputs").
 - Google:     GET /v1beta/models/{model}?key=K -> 200 exists / 404 gone.
 - Groq:       GET /openai/v1/models/{id} with Bearer key -> 200 / 404.
+- Vercel:     GET /v1/models/{id} with Bearer key -> 200 / 404.
 
 Exit code is always 0 unless the OpenRouter catalog itself is unreachable;
 "changed"/"attention" flags go to GITHUB_OUTPUT for the workflow.
@@ -94,6 +95,15 @@ def model_exists(provider, model):
             if not key:
                 return None
             status, _ = _get(f"https://api.groq.com/openai/v1/models/{model}",
+                             {"Authorization": f"Bearer {key}"})
+        elif provider == "vercel":
+            # Multiple comma/whitespace-separated keys are supported; any one works for the
+            # existence check, so use the first.
+            raw = os.environ.get("AI_GATEWAY_API_KEY", "")
+            key = raw.replace(",", " ").split()[0] if raw.strip() else ""
+            if not key:
+                return None
+            status, _ = _get(f"https://ai-gateway.vercel.sh/v1/models/{model}",
                              {"Authorization": f"Bearer {key}"})
         else:
             return None

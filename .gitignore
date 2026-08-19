@@ -23,3 +23,4 @@ final_review.json
 .env.*
 *.pem
 *.key
+.vercel

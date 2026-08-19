@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Update the gateway version tag in all fleet repos' caller workflows.
 #
-# When you tag a new release (v1.1.0, v2.0.0, etc.), run this to bump
+# When you tag a new release (v1.2.0, v2.0.0, etc.), run this to bump
 # the @vX.Y.Z reference in every repo's .github/workflows/ai-review.yml.
 #
 # Usage:
-#   ./update-callers.sh v1.1.0           # bump to v1.1.0
-#   ./update-callers.sh v1.1.0 --dry-run # show what would change without pushing
+#   ./update-callers.sh v1.2.0           # bump to v1.2.0
+#   ./update-callers.sh v1.2.0 --dry-run # show what would change without pushing
 set -euo pipefail
 
-NEW_TAG="${1:?Usage: ./update-callers.sh v1.1.0 [--dry-run]}"
+NEW_TAG="${1:?Usage: ./update-callers.sh v1.2.0 [--dry-run]}"
 DRY_RUN="${2:-}"
 FLEET_FILE="$(dirname "$0")/fleet-repos.txt"
 

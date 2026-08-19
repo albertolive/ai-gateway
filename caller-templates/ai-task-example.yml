@@ -33,7 +33,7 @@ jobs:
     needs: build-prompt
     permissions:
       contents: read
-    uses: albertolive/ai-gateway/.github/workflows/llm-task.yml@v1.0.0
+    uses: albertolive/ai-gateway/.github/workflows/llm-task.yml@v1.2.0
     with:
       prompt: ${{ needs.build-prompt.outputs.prompt }}
       task_intent: general
@@ -41,6 +41,7 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
 
   # Consume the result: ${{ needs.generate.outputs.result }}
   # e.g. append it to the GitHub release body with `gh release edit`.

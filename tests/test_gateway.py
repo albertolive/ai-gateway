@@ -119,6 +119,10 @@ class TestProviders:
         assert gateway.PROVIDERS["deepseek"]["url"] == "https://api.deepseek.com"
         assert gateway.PROVIDERS["deepseek"]["key_env"] == "DEEPSEEK_API_KEY"
 
+    def test_vercel_provider_configured(self):
+        assert gateway.PROVIDERS["vercel"]["url"] == "https://ai-gateway.vercel.sh/v1"
+        assert gateway.PROVIDERS["vercel"]["key_env"] == "AI_GATEWAY_API_KEY"
+
 
 class TestPaidTail:
     """The code_review cascade ends in a paid provider, reached only when the free tier is gone.
@@ -145,3 +149,52 @@ class TestPaidTail:
         # would bill every unrelated caller.
         gen = gateway.load_cascades()["general"]
         assert all(e["key_env"] != "DEEPSEEK_API_KEY" for e in gen)
+
+
+class TestVercel:
+    """Vercel AI Gateway integration: provider, dedicated cascade, free failover tier.
+
+    Vercel is opt-in via AI_GATEWAY_API_KEY (its key_env): repos/apps that never set the key never
+    reach Vercel — the free model is skipped and the paid tail is never billed. Mirrors the DeepSeek
+    opt-in: the KEY is the consent.
+    """
+
+    def test_vercel_cascade_free_then_paid(self):
+        cascades = gateway.load_cascades()
+        assert "vercel" in cascades
+        v = cascades["vercel"]
+        assert [e["model"] for e in v] == [
+            "poolside/laguna-s-2.1-free", "google/gemini-3.6-flash"]
+        assert all(e["key_env"] == "AI_GATEWAY_API_KEY" for e in v)
+
+    def test_free_vercel_tier_is_late_failover(self):
+        # The free Vercel model sits AFTER the established free tiers and BEFORE the
+        # openrouter/free safety net, so it only fires when OpenRouter/Gemini/Groq are exhausted.
+        cascades = gateway.load_cascades()
+        for intent in ("code_review", "general"):
+            models = [e["model"] for e in cascades[intent]]
+            assert "poolside/laguna-s-2.1-free" in models
+            assert models.index("poolside/laguna-s-2.1-free") < models.index("openrouter/free")
+
+    def test_vercel_stays_out_of_creative_and_deepseek(self):
+        # Vercel belongs to its own cascade and the review/general failover, not the
+        # prose `creative` cascade or the DeepSeek-only paid cascade.
+        cascades = gateway.load_cascades()
+        assert all(e["key_env"] != "AI_GATEWAY_API_KEY" for e in cascades["creative"])
+        assert all(e["key_env"] != "AI_GATEWAY_API_KEY" for e in cascades["deepseek_cheap"])
+
+
+class TestProviderKeys:
+    """A provider's key env var may hold several comma/whitespace-separated keys."""
+
+    def test_parses_commas_and_whitespace(self, monkeypatch):
+        monkeypatch.setenv("AI_GATEWAY_TEST_KEY", "  key1 , key2\nkey3\t")
+        assert gateway._provider_keys("AI_GATEWAY_TEST_KEY") == ["key1", "key2", "key3"]
+
+    def test_unset_key_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("AI_GATEWAY_TEST_KEY", raising=False)
+        assert gateway._provider_keys("AI_GATEWAY_TEST_KEY") == []
+
+    def test_single_key_unchanged(self, monkeypatch):
+        monkeypatch.setenv("AI_GATEWAY_TEST_KEY", "onlyone")
+        assert gateway._provider_keys("AI_GATEWAY_TEST_KEY") == ["onlyone"]

@@ -16,7 +16,7 @@ on:
         type: string
         default: ""
       task_intent:
-        description: Cascade to use (general | code_review)
+        description: Cascade to use (general | code_review | creative | vercel | deepseek_cheap)
         type: string
         default: general
       system_prompt:
@@ -37,6 +37,9 @@ on:
         required: false
       GROQ_API_KEY:
         required: false
+      # Vercel AI Gateway (free + paid). Optional: skipped when unset.
+      AI_GATEWAY_API_KEY:
+        required: false
 
 jobs:
   run:
@@ -56,7 +59,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: albertolive/ai-gateway
-          ref: v1.0.0
+          ref: v1.2.0
           path: gateway
           sparse-checkout: |
             scripts
@@ -85,4 +88,5 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
         run: python3 gateway/scripts/llm_task.py

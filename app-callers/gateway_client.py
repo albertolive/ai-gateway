@@ -11,13 +11,18 @@ Usage:
     from gateway_client import complete
     text = complete("Summarize this weather forecast: ...")
     text = complete("...", cascade="deepseek_cheap")  # paid, needs DEEPSEEK_API_KEY
+    text = complete("...", cascade="vercel")  # Vercel AI Gateway, needs AI_GATEWAY_API_KEY
 
 Env: one API key per provider you use (OPENROUTER_API_KEY, DEEPSEEK_API_KEY,
-     GEMINI_API_KEY, GROQ_API_KEY). Only providers with a key set are tried.
+     GEMINI_API_KEY, GROQ_API_KEY, AI_GATEWAY_API_KEY). Only providers with a
+     key set are tried. Any key can hold several comma- or whitespace-separated
+     values (e.g. AI_GATEWAY_API_KEY="acct1,acct2") to fail over across
+     multiple accounts' credit pools.
 """
 
 import json
 import os
+import re
 import urllib.request
 
 CONFIG_URL = "https://raw.githubusercontent.com/albertolive/ai-gateway/main/models.json"
@@ -52,28 +57,31 @@ def complete(prompt, cascade="general", system=None, temperature=0.1, timeout=12
             errors.append(f"{entry['provider']}/{entry['model']}: "
                           f"unknown provider '{entry['provider']}'")
             continue
-        api_key = os.environ.get(provider["key_env"], "").strip()
-        if not api_key:
+        api_keys = [k for k in re.split(r"[,\s]+",
+                                          os.environ.get(provider["key_env"], "")) if k]
+        if not api_keys:
             errors.append(f"{entry['provider']}/{entry['model']}: "
                           f"{provider['key_env']} not set")
             continue
 
         messages = ([{"role": "system", "content": system}] if system else [])
         messages.append({"role": "user", "content": prompt})
-        req = urllib.request.Request(
-            f"{provider['url'].rstrip('/')}/chat/completions",
-            data=json.dumps({"model": entry["model"], "messages": messages,
-                             "temperature": temperature}).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}",
-                     "Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-            return body["choices"][0]["message"]["content"]
-        except Exception as e:
-            errors.append(f"{entry['provider']}/{entry['model']}: {e}")
+
+        for api_key in api_keys:
+            req = urllib.request.Request(
+                f"{provider['url'].rstrip('/')}/chat/completions",
+                data=json.dumps({"model": entry["model"], "messages": messages,
+                                 "temperature": temperature}).encode("utf-8"),
+                headers={"Authorization": f"Bearer {api_key}",
+                         "Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                return body["choices"][0]["message"]["content"]
+            except Exception as e:
+                errors.append(f"{entry['provider']}/{entry['model']}: {e}")
 
     raise RuntimeError(
         "All providers in cascade '" + cascade + "' failed or were "

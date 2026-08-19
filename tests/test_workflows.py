@@ -196,7 +196,7 @@ class TestConcurrency:
 
 
 class TestGatewayRefPinning:
-    """Gateway checkout should use ref: v1.0.0, not ref: main."""
+    """Gateway checkout should pin a versioned tag, not ref: main."""
 
     def test_gateway_checkout_pinned(self):
         wf_dir = os.path.abspath(_WORKFLOW_DIRS[0])
@@ -206,9 +206,9 @@ class TestGatewayRefPinning:
                 continue
             with open(path, encoding="utf-8") as f:
                 content = f.read()
-            # Gateway checkout should use ref: v1.0.0
+            # Gateway checkout should pin a versioned release tag (ref: vX.Y.Z)
             if "repository:" in content and "ai-gateway" in content:
-                assert "ref: v1.0.0" in content, \
-                    f"{name}: gateway checkout should use ref: v1.0.0"
+                assert re.search(r"ref: v\d+\.\d+\.\d+", content), \
+                    f"{name}: gateway checkout should pin a versioned tag (ref: vX.Y.Z)"
                 assert "ref: main" not in content, \
                     f"{name}: gateway checkout still uses ref: main"

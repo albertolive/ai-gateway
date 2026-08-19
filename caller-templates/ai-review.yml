@@ -20,11 +20,12 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: albertolive/ai-gateway/.github/workflows/pr-review.yml@v1.0.0
+    uses: albertolive/ai-gateway/.github/workflows/pr-review.yml@v1.2.0
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
       CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
 
   reply:
@@ -36,8 +37,9 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: albertolive/ai-gateway/.github/workflows/pr-reply.yml@v1.0.0
+    uses: albertolive/ai-gateway/.github/workflows/pr-reply.yml@v1.2.0
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}

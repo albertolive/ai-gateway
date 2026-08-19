@@ -11,7 +11,7 @@
 set -euo pipefail
 
 GATEWAY_OWNER="albertolive"
-VERSION_TAG="v1.0.0"
+VERSION_TAG="v1.2.0"
 FLEET_FILE="$(dirname "$0")/fleet-repos.txt"
 
 # Read repo list from fleet-repos.txt (one per line, # = comment)
@@ -53,6 +53,7 @@ jobs:
       OPENROUTER_API_KEY: \${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: \${{ secrets.GEMINI_API_KEY }}
       GROQ_API_KEY: \${{ secrets.GROQ_API_KEY }}
+      AI_GATEWAY_API_KEY: \${{ secrets.AI_GATEWAY_API_KEY }}
       CONTEXT7_API_KEY: \${{ secrets.CONTEXT7_API_KEY }}
 
   reply:
@@ -69,6 +70,7 @@ jobs:
       OPENROUTER_API_KEY: \${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: \${{ secrets.GEMINI_API_KEY }}
       GROQ_API_KEY: \${{ secrets.GROQ_API_KEY }}
+      AI_GATEWAY_API_KEY: \${{ secrets.AI_GATEWAY_API_KEY }}
 EOF
 )
 
@@ -112,5 +114,5 @@ echo
 echo "✅ Callers deployed to ${#TARGET_REPOSITORIES[@]} repos."
 echo "Next steps:"
 echo "  1. Set API keys: ./set-secrets.sh"
-echo "  2. To update the gateway version later: ./update-callers.sh v1.1.0"
+echo "  2. To update the gateway version later: ./update-callers.sh v1.2.0"
 echo "  3. To check secret status: ./set-secrets.sh --list"

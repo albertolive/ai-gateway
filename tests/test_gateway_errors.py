@@ -17,14 +17,16 @@ import gateway
 class TestCascadeSkipNoKey:
     def test_all_providers_skipped_raises_runtime_error(self, monkeypatch):
         """When no API keys are set, complete() should raise RuntimeError."""
-        for key in ["OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY"]:
+        for key in ["OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
+                    "AI_GATEWAY_API_KEY"]:
             monkeypatch.delenv(key, raising=False)
         with pytest.raises(RuntimeError, match="All providers.*failed.*skipped"):
             gateway.complete("test prompt", intent="general")
 
     def test_runtime_error_lists_skip_messages(self, monkeypatch):
         """The error message should mention which providers were skipped."""
-        for key in ["OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY"]:
+        for key in ["OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
+                    "AI_GATEWAY_API_KEY"]:
             monkeypatch.delenv(key, raising=False)
         with pytest.raises(RuntimeError) as exc_info:
             gateway.complete("test", intent="general")
@@ -167,7 +169,8 @@ class TestCascadeCostControl:
     """
 
     def _keys(self, monkeypatch):
-        for k in ("OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY"):
+        for k in ("OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
+                  "DEEPSEEK_API_KEY", "AI_GATEWAY_API_KEY"):
             monkeypatch.setenv(k, "x")
 
     def _fail_with(self, monkeypatch, code, body, sleep=0.0):
@@ -273,3 +276,93 @@ class TestCascadeCostControl:
         self._fail_with(monkeypatch, 500, "{}")
         with pytest.raises(RuntimeError):
             gateway.complete("p", intent="code_review")
+
+
+class TestMultiKeyFailover:
+    """A provider's key env var may hold several keys (multiple accounts), tried in order.
+
+    Several Vercel accounts each contribute their own monthly credit pool; the cascade must
+    exhaust key 1 before touching key 2, and only then move to the next model/provider.
+    """
+
+    def test_first_key_fails_second_succeeds(self, monkeypatch):
+        calls = []
+
+        def mock_post(base_url, api_key, payload, timeout=120):
+            calls.append(api_key)
+            if api_key == "key2":
+                return "ok"
+            raise urllib.error.HTTPError(base_url, 500, "Server Error", {}, None)
+
+        monkeypatch.setattr(gateway, "_post_chat", mock_post)
+        for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "AI_GATEWAY_API_KEY",
+                  "DEEPSEEK_API_KEY"):
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key1,key2")
+
+        result, _ = gateway.complete("p", intent="code_review")
+        assert result == "ok"
+        assert calls == ["key1", "key2"], "second key must be tried after the first fails"
+
+    def test_daily_cap_on_first_key_skips_to_second(self, monkeypatch):
+        import io
+        calls = []
+
+        def mock_post(base_url, api_key, payload, timeout=120):
+            calls.append(api_key)
+            if api_key == "key2":
+                return "ok"
+            raise urllib.error.HTTPError(
+                base_url, 429, "rate limit", {},
+                io.BytesIO(b'{"error":{"message":"Rate limit exceeded: free-models-per-day"}}'))
+
+        monkeypatch.setattr(gateway, "_post_chat", mock_post)
+        for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "AI_GATEWAY_API_KEY",
+                  "DEEPSEEK_API_KEY"):
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key1,key2")
+
+        result, _ = gateway.complete("p", intent="code_review")
+        assert result == "ok"
+        assert calls == ["key1", "key2"], "a daily cap must not retry the same key"
+
+    def test_credit_exhaustion_on_first_key_skips_to_second(self, monkeypatch):
+        import io
+        calls = []
+
+        def mock_post(base_url, api_key, payload, timeout=120):
+            calls.append(api_key)
+            if api_key == "key2":
+                return "ok"
+            raise urllib.error.HTTPError(
+                base_url, 429, "rate limit", {},
+                io.BytesIO(b'{"error":{"message":"insufficient credits"}}'))
+
+        monkeypatch.setattr(gateway, "_post_chat", mock_post)
+        for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "AI_GATEWAY_API_KEY",
+                  "DEEPSEEK_API_KEY"):
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key1,key2")
+
+        result, _ = gateway.complete("p", intent="code_review")
+        assert result == "ok"
+        assert calls == ["key1", "key2"], "a spent-credit 429 must not retry the same key"
+
+    def test_all_keys_exhausted_moves_to_next_provider(self, monkeypatch):
+        calls = []
+
+        def mock_post(base_url, api_key, payload, timeout=120):
+            calls.append(api_key)
+            raise urllib.error.HTTPError(base_url, 500, "Server Error", {}, None)
+
+        monkeypatch.setattr(gateway, "_post_chat", mock_post)
+        for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "AI_GATEWAY_API_KEY",
+                  "DEEPSEEK_API_KEY"):
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key1,key2")
+        monkeypatch.setattr(gateway.time, "sleep", lambda s: None)
+
+        with pytest.raises(RuntimeError):
+            gateway.complete("p", intent="code_review")
+        # code_review has three openrouter entries; two keys each = six calls, then give up.
+        assert calls == ["key1", "key2"] * 3

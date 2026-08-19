@@ -11,9 +11,12 @@
 //   const { complete } = require("./gateway-client");
 //   const text = await complete("Summarize this weather forecast: ...");
 //   const text = await complete("...", { cascade: "deepseek_cheap" }); // paid, needs DEEPSEEK_API_KEY
+//   const text = await complete("...", { cascade: "vercel" }); // Vercel AI Gateway, needs AI_GATEWAY_API_KEY
 //
 // Env: one API key per provider you use (OPENROUTER_API_KEY, DEEPSEEK_API_KEY,
-//      GEMINI_API_KEY, GROQ_API_KEY). Only providers with a key set are tried.
+//      GEMINI_API_KEY, GROQ_API_KEY, AI_GATEWAY_API_KEY). Only providers with a key set are tried.
+//      Any key can hold several comma- or whitespace-separated values
+//      (e.g. AI_GATEWAY_API_KEY="acct1,acct2") to fail over across accounts.
 
 const CONFIG_URL =
   "https://raw.githubusercontent.com/albertolive/ai-gateway/main/models.json";
@@ -46,8 +49,10 @@ async function complete(prompt, { cascade = "general", system, temperature = 0.1
       errors.push(`${entry.provider}/${entry.model}: unknown provider '${entry.provider}'`);
       continue;
     }
-    const apiKey = process.env[provider.key_env];
-    if (!apiKey) {
+    const apiKeys = (process.env[provider.key_env] || "")
+      .split(/[,\s]+/)
+      .filter(Boolean);
+    if (!apiKeys.length) {
       errors.push(`${entry.provider}/${entry.model}: ${provider.key_env} not set`);
       continue;
     }
@@ -57,20 +62,22 @@ async function complete(prompt, { cascade = "general", system, temperature = 0.1
       { role: "user", content: prompt },
     ];
 
-    try {
-      const res = await fetch(`${provider.url.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ model: entry.model, messages, temperature }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-      const body = await res.json();
-      return body.choices[0].message.content;
-    } catch (e) {
-      errors.push(`${entry.provider}/${entry.model}: ${e}`);
+    for (const apiKey of apiKeys) {
+      try {
+        const res = await fetch(`${provider.url.replace(/\/$/, "")}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ model: entry.model, messages, temperature }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+        const body = await res.json();
+        return body.choices[0].message.content;
+      } catch (e) {
+        errors.push(`${entry.provider}/${entry.model}: ${e}`);
+      }
     }
   }
 
