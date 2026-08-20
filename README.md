@@ -142,6 +142,8 @@ curl -s https://<gateway>/api/chat/completions \
 - `model` = cascade name (`general`, `code_review`, `creative`, `frontier`, `deepseek_cheap`). Unknown cascade → `400`.
 - `Authorization: Bearer $GATEWAY_TOKEN` is the only credential a repo holds.
 - The response is OpenAI chat-completions shaped; its `model` field reports the provider that actually served the request.
+- **Structured outputs:** send `response_format: {type: json_schema, json_schema: {name, schema}}` (or a top-level `schema` object for `json_object` mode). The response `content` is then a JSON string; the cascade uses strict `json_schema` per provider where supported, else prompt-embedded `json_object`.
+- **Vision:** `messages[].content` may be an array of parts — `{type: text}` and `{type: image_url, image_url: {url}}` pass through unchanged. Cascade entries marked `vision: false` in `models.json` (groq's llama, deepseek) are skipped for such requests instead of failing.
 - Deploy: `git push` → Vercel auto-deploys this repo. Set these env vars in the Vercel project (never in repos): `GATEWAY_TOKEN`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `AI_GATEWAY_API_KEY` (comma-separated = multiple accounts), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
 - Vercel Hobby caps a function at 300s, so the server caps the cascade at 280s (CI keeps its 900s budget).
 - Run locally: `GATEWAY_TOKEN=... ./scripts/serve.py`.

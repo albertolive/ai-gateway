@@ -60,7 +60,12 @@ Why Vercel Hobby (verified against Vercel docs, 2026-08):
 - `POST /api/chat/completions`, OpenAI chat-completions shape.
 - `model` field = **cascade name** (`general`, `code_review`, `creative`,
   `frontier`, `deepseek_cheap`, …). Unknown cascade → `400` listing valid names.
-- `messages` = system + user/assistant turns (flattened into one prompt).
+- `messages` = OpenAI-shaped turns; content may be a string **or an array of
+  parts** — `image_url` parts pass through unchanged (vision). Cascade entries
+  flagged `vision: false` in `models.json` are skipped for image requests.
+- Structured outputs: `response_format: {type: json_schema, json_schema: {name,
+  schema}}` (strict per-provider where supported) or a top-level `schema` for
+  loose `json_object` mode; `content` in the response is then a JSON string.
 - Auth: `Authorization: Bearer $GATEWAY_TOKEN`.
 - Success: `200` with `choices[0].message.content` and `model` = the provider
   that actually served the request (for observability).
@@ -91,11 +96,13 @@ already bounded by the remaining budget in `gateway.py`.
 ### What it does NOT do yet (deliberately scoped out)
 
 - Streaming responses.
-- Structured-output passthrough (`response_format` / JSON schema) — the cascade
-  supports schema internally for CI, but the hosted endpoint returns text only.
-- Persistent usage counter / dashboard — the gateway now logs one flat JSON
-  `usage` line per request (aggregate with `scripts/usage.py`), but Vercel
-  Hobby log retention is short and there's no durable store yet.
+- Persistent usage counter / dashboard — the gateway logs one flat JSON `usage`
+  line per request (aggregate with `scripts/usage.py`), but Vercel Hobby log
+  retention is short and there's no durable store yet.
+
+(Vision and structured outputs were added 2026-08 — see the HTTP contract above;
+meteo-brief's remaining blockers are per-phase model routing and Langfuse
+-style tracing, which are app-level concerns, not endpoint gaps.)
 
 ## Rollout
 

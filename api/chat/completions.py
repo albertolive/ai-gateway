@@ -9,6 +9,12 @@ Reuses scripts/gateway.py unchanged: it already does cascade resolution,
 multi-key failover, daily-cap detection, and the wall-clock budget. This file is
 only the HTTP adapter.
 
+Request shape is OpenAI chat-completions: `messages` (content may be a string or
+an array of parts — image_url parts pass through unchanged for vision), plus
+optional `response_format` (json_schema with a strict schema, or json_object)
+or a top-level `schema` object for structured outputs. `model` is still a
+cascade name; the response carries the provider that actually served it.
+
 Env (all held centrally in the Vercel project, never in repos):
   GATEWAY_TOKEN        (required) inbound auth; repos send `Bearer $GATEWAY_TOKEN`
   OPENROUTER_API_KEY   OpenRouter provider
@@ -90,8 +96,62 @@ def _authorized(headers):
     return headers.get("Authorization", "") == f"Bearer {token}"
 
 
+def _flatten_text(content):
+    """Text of a message content (string or array of text parts).
+
+    Image parts are dropped here — this mirror is only for the prompt-building
+    path and observability; the request forwarded to the cascade keeps parts.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            p.get("text") for p in content
+            if isinstance(p, dict) and p.get("type") == "text" and p.get("text")
+        ).strip()
+    return ""
+
+
+def _parse_schema(body):
+    """Extract (schema, schema_name) from response_format or a top-level schema.
+
+    Accepts the OpenAI shape (response_format.json_schema.schema) and a simple
+    top-level `schema` object (+ optional schema_name) for json_object mode.
+    Returns (None, "response") when the client asked for no structured output.
+    """
+    rf = body.get("response_format")
+    if rf is not None:
+        if not isinstance(rf, dict):
+            raise ValueError("response_format must be an object")
+        rf_type = rf.get("type")
+        if rf_type == "json_schema":
+            js = rf.get("json_schema") or {}
+            schema = js.get("schema")
+            if not isinstance(schema, dict):
+                raise ValueError(
+                    "response_format.json_schema.schema must be an object")
+            return schema, str(js.get("name") or "response")
+        if rf_type == "json_object":
+            # Loose JSON mode: a top-level `schema` (if any) is embedded in the
+            # prompt for providers without strict json_schema (groq/deepseek).
+            schema = body.get("schema")
+            return (schema if isinstance(schema, dict) else None), \
+                str(body.get("schema_name") or "response")
+        raise ValueError(f"unsupported response_format type {rf_type!r} — "
+                         "use json_schema or json_object")
+    schema = body.get("schema")
+    if schema is not None and not isinstance(schema, dict):
+        raise ValueError("schema must be an object")
+    return schema, str(body.get("schema_name") or "response")
+
+
 def _parse(body):
-    """Return (cascade, system, prompt) or raise ValueError with a clear reason."""
+    """Return (cascade, system, prompt, messages, schema, schema_name).
+
+    Raises ValueError with a clear reason. messages are validated and forwarded
+    VERBATIM to the cascade so image content parts survive (vision); system and
+    prompt are flattened text mirrors for the prompt path and observability.
+    """
     if not isinstance(body, dict):
         raise ValueError("body must be a JSON object")
     cascade = str(body.get("model") or "general").strip()
@@ -101,16 +161,37 @@ def _parse(body):
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
         raise ValueError("messages must be a non-empty list")
-    system = next((m.get("content") for m in messages
-                   if isinstance(m, dict) and m.get("role") == "system"), None)
+    for i, m in enumerate(messages):
+        if not isinstance(m, dict) or m.get("role") not in ("system", "user",
+                                                             "assistant"):
+            raise ValueError(f"messages[{i}] must be an object with role "
+                             "system, user or assistant")
+        content = m.get("content")
+        if isinstance(content, str):
+            if not content.strip():
+                raise ValueError(f"messages[{i}] content cannot be empty")
+        elif isinstance(content, list):
+            if not content:
+                raise ValueError(f"messages[{i}] content array cannot be empty")
+            for part in content:
+                if isinstance(part, str):
+                    continue
+                if not isinstance(part, dict) or "type" not in part:
+                    raise ValueError(f"messages[{i}] has a malformed content part")
+        else:
+            raise ValueError(f"messages[{i}] content must be a string or an "
+                             "array of parts")
+    system = next((_flatten_text(m.get("content")) for m in messages
+                   if m.get("role") == "system"), None)
     prompt = "\n".join(
-        str(m.get("content") or "")
+        _flatten_text(m.get("content"))
         for m in messages
-        if isinstance(m, dict) and m.get("role") in ("user", "assistant")
+        if m.get("role") in ("user", "assistant")
     ).strip()
     if not prompt:
         raise ValueError("messages must contain a user message with content")
-    return cascade, system, prompt
+    schema, schema_name = _parse_schema(body)
+    return cascade, system, prompt, messages, schema, schema_name
 
 
 def _send(handler, status, payload):
@@ -134,7 +215,7 @@ class handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
-            cascade, system, prompt = _parse(body)
+            cascade, system, prompt, messages, schema, schema_name = _parse(body)
         except ValueError as e:
             _send(self, 400, {"error": {"message": str(e)}})
             return
@@ -150,6 +231,9 @@ class handler(BaseHTTPRequestHandler):
                 intent=cascade,
                 temperature=float(body.get("temperature", 0.1)),
                 budget_s=_budget(),
+                messages=messages,
+                schema=schema,
+                schema_name=schema_name,
             )
         except Exception as e:
             # The cascade raises RuntimeError with the per-provider errors when
@@ -159,6 +243,9 @@ class handler(BaseHTTPRequestHandler):
             return
         _log_usage(cascade, used, "ok", _elapsed_ms(started))
 
+        # Structured mode returns the parsed object; OpenAI clients expect a JSON
+        # STRING in choices[0].message.content, so serialize it back.
+        content = json.dumps(text, ensure_ascii=False) if schema else text
         _send(self, 200, {
             "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
             "object": "chat.completion",
@@ -166,7 +253,7 @@ class handler(BaseHTTPRequestHandler):
             "model": used,
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": text},
+                "message": {"role": "assistant", "content": content},
                 "finish_reason": "stop",
             }],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},

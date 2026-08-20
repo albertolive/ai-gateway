@@ -48,6 +48,10 @@ def load_cascades(path=_CONFIG_PATH):
                 "name": f"{e['provider']}/{e['model']}",
                 "url": p["url"], "key_env": p["key_env"],
                 "model": e["model"], "structured": e.get("structured", "json_object"),
+                # vision: False on entries whose model rejects image content parts
+                # (deepseek, groq's llama) so a vision request SKIPS them instead of
+                # burning a guaranteed 400 round-trip per provider before failing over.
+                "vision": e.get("vision", True),
             })
     return resolved
 
@@ -99,9 +103,52 @@ def _post_chat(base_url, api_key, payload, timeout=120):
     return body["choices"][0]["message"]["content"]
 
 
+def _has_image_parts(messages):
+    """True when any message carries a non-text content part (image_url etc.).
+
+    The hosted endpoint passes OpenAI-style message arrays through, so content
+    may be a string or a list of {type: text|image_url|...} parts. A cascade
+    entry flagged vision: false cannot answer such a request, so it is skipped
+    instead of burning a guaranteed-failing round-trip.
+    """
+    if not messages:
+        return False
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") != "text":
+                    return True
+    return False
+
+
+def _messages_with_schema_instruction(messages, schema, json_object_mode):
+    """Forward client messages verbatim, embedding `schema` into the system turn.
+
+    json_object providers enforce nothing server-side (the schema must live in
+    the prompt), mirroring what the prompt path does with sys_content. Returns
+    shallow copies; the caller's list is never mutated.
+    """
+    out = [dict(m) for m in messages]
+    if not (schema and json_object_mode):
+        return out
+    instr = ("Respond ONLY with a single valid JSON object matching this "
+             "JSON Schema exactly:\n" + json.dumps(schema))
+    for m in out:
+        if m.get("role") == "system":
+            cur = m.get("content")
+            if isinstance(cur, list):
+                m["content"] = [{"type": "text", "text": instr}] + list(cur)
+            else:
+                m["content"] = (cur or "") + "\n\n" + instr
+            return out
+    out.insert(0, {"role": "system", "content": instr})
+    return out
+
+
 def complete(prompt, system=None, intent="general", schema=None,
              schema_name="response", temperature=0.1, max_retries_per_provider=1,
-             budget_s=None):
+             budget_s=None, messages=None):
     """Run prompt through the cascade. Returns (text, provider_name).
 
     If `schema` (a JSON Schema dict) is given, output is requested/validated
@@ -116,8 +163,15 @@ def complete(prompt, system=None, intent="general", schema=None,
 
     900 is measured, not picked. Every SUCCESSFUL AI PR Review in the week to 2026-07-29 took
     between 312s and 666s, so a tighter budget would have killed real work: a 300s default would
-    have failed all six. 900 clears the observed maximum by ~35% while still cutting the
+    have failed all six.    900 clears the observed maximum by ~35% while still cutting the
     pathological case from 44 minutes to 15. Lower it only against fresh timings.
+
+    `messages` (optional) forwards OpenAI-style message objects verbatim instead of
+    building them from prompt/system — needed for vision (image content parts) and
+    for the hosted endpoint to pass client messages through unchanged. When a
+    request contains image parts, cascade entries flagged `vision: false` in
+    models.json are skipped rather than tried. `schema`/`schema_name` work as
+    before; the caller gets the parsed object back on success.
     """
     cascade = CASCADES.get(intent, CASCADES["general"])
     errors = []
@@ -134,10 +188,17 @@ def complete(prompt, system=None, intent="general", schema=None,
     started = time.monotonic()
     left = lambda: budget_s - (time.monotonic() - started)  # noqa: E731
 
+    needs_vision = _has_image_parts(messages)
+
     for provider in cascade:
         keys = _provider_keys(provider["key_env"])
         if not keys:
             print(f"  skip {provider['name']}: {provider['key_env']} not set")
+            continue
+        if needs_vision and not provider.get("vision", True):
+            msg = f"{provider['name']}: skipped (no vision, request has image parts)"
+            print(f"  skip {msg}")
+            errors.append(msg)
             continue
         if left() <= 0:
             msg = f"{provider['name']}: skipped, {budget_s:.0f}s cascade budget exhausted"
@@ -145,20 +206,24 @@ def complete(prompt, system=None, intent="general", schema=None,
             errors.append(msg)
             continue
 
-        messages = []
-        sys_content = system or ""
-        if schema and provider["structured"] == "json_object":
-            sys_content += (
-                "\n\nRespond ONLY with a single valid JSON object matching "
-                "this JSON Schema exactly:\n" + json.dumps(schema)
-            )
-        if sys_content:
-            messages.append({"role": "system", "content": sys_content})
-        messages.append({"role": "user", "content": prompt})
+        if messages is not None:
+            msgs = _messages_with_schema_instruction(
+                messages, schema, provider["structured"] == "json_object")
+        else:
+            msgs = []
+            sys_content = system or ""
+            if schema and provider["structured"] == "json_object":
+                sys_content += (
+                    "\n\nRespond ONLY with a single valid JSON object matching "
+                    "this JSON Schema exactly:\n" + json.dumps(schema)
+                )
+            if sys_content:
+                msgs.append({"role": "system", "content": sys_content})
+            msgs.append({"role": "user", "content": prompt})
 
         payload = {
             "model": provider["model"],
-            "messages": messages,
+            "messages": msgs,
             "temperature": temperature,
         }
         if schema:

@@ -4,6 +4,8 @@ import json
 import os
 import tempfile
 
+import pytest
+
 import gateway
 
 
@@ -218,3 +220,102 @@ class TestProviderKeys:
     def test_single_key_unchanged(self, monkeypatch):
         monkeypatch.setenv("AI_GATEWAY_TEST_KEY", "onlyone")
         assert gateway._provider_keys("AI_GATEWAY_TEST_KEY") == ["onlyone"]
+
+
+class TestVisionFlag:
+    """Every cascade entry carries a vision capability; known text-only models are False."""
+
+    def test_every_entry_has_vision_flag(self):
+        cascades = gateway.load_cascades()
+        for intent, entries in cascades.items():
+            for e in entries:
+                assert "vision" in e, f"{intent}/{e['name']} missing vision"
+
+    def test_known_text_only_models_flagged_false(self):
+        cascades = gateway.load_cascades()
+        assert cascades["deepseek_cheap"][0]["vision"] is False
+        assert cascades["general"][-2]["vision"] is False  # groq llama
+        assert cascades["general"][0]["vision"] is True     # gemini
+
+
+class TestMessagesForwarding:
+    """complete(messages=...) forwards client messages verbatim (vision parts)."""
+
+    def test_messages_forwarded_verbatim(self, monkeypatch):
+        seen = {}
+
+        def mock_post(base_url, api_key, payload, timeout=120):
+            seen["payload"] = payload
+            return "ok"
+
+        monkeypatch.setattr(gateway, "_post_chat", mock_post)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        msgs = [{"role": "user", "content": [
+            {"type": "text", "text": "what is this?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]}]
+        gateway.complete("ignored", messages=msgs, intent="general")
+        assert seen["payload"]["messages"] == msgs
+
+    def test_vision_request_skips_visionless_providers(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(gateway, "_post_chat",
+                            lambda *a, **kw: calls.append(1))
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+        msgs = [{"role": "user", "content": [
+            {"type": "text", "text": "describe"},
+            {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+        ]}]
+        with pytest.raises(RuntimeError, match="no vision"):
+            gateway.complete("ignored", messages=msgs, intent="deepseek_cheap")
+        assert not calls, "a visionless provider must never be called"
+
+    def test_vision_request_uses_vision_capable_provider(self, monkeypatch):
+        seen = {}
+
+        def mock_post(base_url, api_key, payload, timeout=120):
+            seen["msgs"] = payload["messages"]
+            return "ok"
+
+        monkeypatch.setattr(gateway, "_post_chat", mock_post)
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        msgs = [{"role": "user", "content": [
+            {"type": "text", "text": "describe"},
+            {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+        ]}]
+        text, provider = gateway.complete("ignored", messages=msgs, intent="general")
+        assert seen["msgs"] == msgs
+        assert provider.startswith("gemini/")
+
+    def test_json_object_mode_embeds_schema_in_system_message(self, monkeypatch):
+        seen = {}
+
+        def mock_post(base_url, api_key, payload, timeout=120):
+            seen["payload"] = payload
+            return '{"n": 1}'
+
+        monkeypatch.setattr(gateway, "_post_chat", mock_post)
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        # Clear shell-inherited keys so groq (json_object mode) is the first
+        # provider actually reached in the `general` cascade.
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        schema = {"type": "object", "properties": {"n": {"type": "integer"}}}
+        msgs = [{"role": "system", "content": "You are a counter."},
+                {"role": "user", "content": "count"}]
+        result, provider = gateway.complete("ignored", messages=msgs,
+                                            intent="general", schema=schema)
+        sent = seen["payload"]["messages"]
+        assert sent[0]["role"] == "system"
+        assert sent[0]["content"].startswith("You are a counter.")
+        assert "JSON Schema" in sent[0]["content"]
+        assert sent[1] == msgs[1]
+        assert result == {"n": 1}
+
+    def test_no_images_does_not_skip_visionless_provider(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(gateway, "_post_chat",
+                            lambda *a, **kw: calls.append(1) or "ok")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
+        gateway.complete("plain text", intent="deepseek_cheap")
+        assert len(calls) == 1, "a text-only request may use a visionless provider"

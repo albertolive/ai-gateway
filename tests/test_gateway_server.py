@@ -152,3 +152,76 @@ def test_usage_event_logged_on_failure(gw, monkeypatch, capsys):
     assert len(events) == 1
     assert events[0]["status"] == "error"
     assert events[0]["model"] is None
+
+
+def test_response_format_json_schema_passes_schema(gw, monkeypatch):
+    seen = {}
+
+    def fake_complete(prompt, system=None, intent="general", **kw):
+        seen["schema"] = kw.get("schema")
+        seen["schema_name"] = kw.get("schema_name")
+        return {"summary": "ok"}, "gemini/x"
+
+    monkeypatch.setattr(gateway, "complete", fake_complete)
+    schema = {"type": "object", "properties": {"summary": {"type": "string"}},
+              "required": ["summary"]}
+    status, body = _post(gw, {"model": "general",
+                              "response_format": {"type": "json_schema",
+                                                  "json_schema": {"name": "brief",
+                                                                  "schema": schema}},
+                              "messages": [{"role": "user", "content": "summarize"}]})
+    assert status == 200
+    assert seen["schema"] == schema
+    assert seen["schema_name"] == "brief"
+    # Structured responses arrive as a JSON STRING in content (OpenAI shape).
+    assert json.loads(body["choices"][0]["message"]["content"]) == {"summary": "ok"}
+
+
+def test_image_parts_forwarded_to_cascade(gw, monkeypatch):
+    seen = {}
+
+    def fake_complete(prompt, system=None, intent="general", **kw):
+        seen["messages"] = kw.get("messages")
+        return "ok", "gemini/x"
+
+    monkeypatch.setattr(gateway, "complete", fake_complete)
+    msgs = [{"role": "user", "content": [
+        {"type": "text", "text": "what is in this image?"},
+        {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+    ]}]
+    status, _ = _post(gw, {"model": "general", "messages": msgs})
+    assert status == 200
+    assert seen["messages"] == msgs
+
+
+def test_response_format_json_object_accepts_top_level_schema(gw, monkeypatch):
+    seen = {}
+
+    def fake_complete(prompt, system=None, intent="general", **kw):
+        seen["schema"] = kw.get("schema")
+        return {"n": 1}, "groq/x"
+
+    monkeypatch.setattr(gateway, "complete", fake_complete)
+    schema = {"type": "object", "properties": {"n": {"type": "integer"}}}
+    status, body = _post(gw, {"model": "general",
+                              "response_format": {"type": "json_object"},
+                              "schema": schema,
+                              "messages": [{"role": "user", "content": "count"}]})
+    assert status == 200
+    assert seen["schema"] == schema
+    assert json.loads(body["choices"][0]["message"]["content"]) == {"n": 1}
+
+
+def test_unknown_response_format_type_is_400(gw):
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(gw, {"model": "general",
+                   "response_format": {"type": "text"},
+                   "messages": [{"role": "user", "content": "hi"}]})
+    assert exc.value.code == 400
+
+
+def test_malformed_content_part_is_400(gw):
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(gw, {"model": "general", "messages": [{"role": "user",
+                                                        "content": [{"url": "x"}]}]})
+    assert exc.value.code == 400
