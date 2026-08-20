@@ -26,7 +26,7 @@ The cascade (in `scripts/gateway.py`) tries free providers in order and fails ov
 
 > **Model IDs are verified, not assumed.** All IDs above were checked against live provider catalogs on July 22, 2026. `cohere/north-mini-code:free` and `poolside/laguna-m.1:free` are confirmed present in the OpenRouter catalog; `gemini-2.0-flash` is the current valid Flash model on Google's OpenAI-compatible endpoint (no `google/` prefix). The model-watch workflow keeps this current automatically (see below).
 
-**Vercel AI Gateway** is an optional provider behind `AI_GATEWAY_API_KEY`: one key, hundreds of models, no token markup. Its free model `poolside/laguna-s-2.1-free` is a late failover tier in `code_review` and `general` (reached only after OpenRouter/Gemini/Groq are exhausted), and a dedicated `vercel` cascade (free → paid `google/gemini-3.6-flash`) serves `llm-task.yml` (`task_intent: vercel`) and the app callers (`cascade="vercel"`). Paid Vercel models bill your Vercel account, so passing the key is the opt-in.
+**Vercel AI Gateway** is the paid **frontier tier**, behind `AI_GATEWAY_API_KEY`: one key, hundreds of models, no token markup, billed on your Vercel account. It's reserved for the `frontier` cascade — `anthropic/claude-opus-5` → `openai/gpt-5.6-sol` → `google/gemini-3.1-pro-preview` (the 2026 frontier, per Artificial Analysis Intelligence Index). Direct `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` follow as independent fallback tiers: same token price, separate billing path, so a Vercel outage or credit exhaustion fails over to your own keys. The free cascades (`code_review`, `general`, `creative`) stay Vercel-free, so passing the key is the opt-in: a repo that never sets it never spends. Swap a frontier model by editing the `frontier` list in `models.json`; nothing else changes.
 
 **Multiple accounts.** Any provider's key env var accepts several comma- or whitespace-separated keys — e.g. `AI_GATEWAY_API_KEY="acct1,acct2"` — and the gateway fails over through them in order. This is how you spread load across several Vercel accounts, each drawing on its own monthly credit pool: when one account's rate limit or credits are exhausted the next key is tried before moving to the next model/provider.
 
@@ -44,7 +44,7 @@ Scripts are **stdlib-only Python** — no `pip install`, no supply-chain surface
    - OpenRouter: https://openrouter.ai/keys
    - Google AI Studio: https://aistudio.google.com/apikey
    - Groq: https://console.groq.com/keys
-   - Vercel AI Gateway: https://vercel.com/ai-gateway (optional — one free model, plus paid models billed on your Vercel account)
+   - Vercel AI Gateway: https://vercel.com/ai-gateway (optional — frontier models billed on your Vercel account)
 4. **Store the secrets** as `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `AI_GATEWAY_API_KEY`:
    - **Org repos:** Organization Settings → Secrets and variables → Actions → org-level secrets, scoped to the repos you want. Set once, done.
    - **Personal repos:** no account-level secrets exist, so set per repo: `gh secret set OPENROUTER_API_KEY -R you/repo --body "sk-or-..."` (loop over repos, or let `deploy-callers.sh` remind you).
@@ -114,7 +114,7 @@ The gateway isn't limited to GitHub Actions. `models.json` at the repo root is t
 from gateway_client import complete
 text = complete("Summarize this forecast: ...")                    # free tier, cascade="general"
 text = complete("...", cascade="deepseek_cheap")                   # paid, needs DEEPSEEK_API_KEY
-text = complete("...", cascade="vercel")                          # Vercel AI Gateway, needs AI_GATEWAY_API_KEY
+text = complete("...", cascade="frontier")                        # frontier tier: Vercel, then direct Anthropic/OpenAI keys
 ```
 
 Because the app only ever references a cascade name, swapping the underlying model, adding a new provider, or retiring a dead free-tier model is a one-line edit to `models.json` in this repo — every app picks it up on its next call, with zero app-code changes. This is also how you add a paid provider like DeepSeek without going through OpenRouter's markup: `providers.deepseek` points straight at `api.deepseek.com`, billed on your own DeepSeek account, and the `deepseek_cheap` cascade pins `deepseek-v4-flash`.
@@ -139,12 +139,25 @@ curl -s https://<gateway>/api/chat/completions \
   -d '{"model":"general","messages":[{"role":"user","content":"Summarize ..."}]}'
 ```
 
-- `model` = cascade name (`general`, `code_review`, `creative`, `vercel`, `deepseek_cheap`). Unknown cascade → `400`.
+- `model` = cascade name (`general`, `code_review`, `creative`, `frontier`, `deepseek_cheap`). Unknown cascade → `400`.
 - `Authorization: Bearer $GATEWAY_TOKEN` is the only credential a repo holds.
 - The response is OpenAI chat-completions shaped; its `model` field reports the provider that actually served the request.
-- Deploy: `git push` → Vercel auto-deploys this repo. Set these env vars in the Vercel project (never in repos): `GATEWAY_TOKEN`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `AI_GATEWAY_API_KEY` (comma-separated = multiple accounts).
+- Deploy: `git push` → Vercel auto-deploys this repo. Set these env vars in the Vercel project (never in repos): `GATEWAY_TOKEN`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `AI_GATEWAY_API_KEY` (comma-separated = multiple accounts), `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
 - Vercel Hobby caps a function at 300s, so the server caps the cascade at 280s (CI keeps its 900s budget).
 - Run locally: `GATEWAY_TOKEN=... ./scripts/serve.py`.
+
+**Measuring usage.** Every request logs one flat JSON line to stdout
+(`{"event":"usage","cascade":...,"model":...,"status":...,"elapsed_ms":...}`).
+Aggregate them with:
+
+```bash
+vercel logs ai-gateway-livid-eight.vercel.app | python3 scripts/usage.py
+```
+
+Vercel Hobby keeps function logs for only a short window and ingests them
+only eventually (a request's lines can lag by a minute or more), so this is for
+spot-checking rather than long-term analytics — for a durable, exact counter,
+wire a store (Upstash Redis / Vercel KV) later.
 
 See `docs/architecture.md` for the full spec and rollout plan.
 

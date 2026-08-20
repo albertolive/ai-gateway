@@ -16,7 +16,7 @@ on:
         type: string
         default: ""
       task_intent:
-        description: Cascade to use (general | code_review | creative | vercel | deepseek_cheap)
+        description: Cascade to use (general | code_review | creative | frontier | deepseek_cheap)
         type: string
         default: general
       system_prompt:
@@ -37,7 +37,7 @@ on:
         required: false
       GROQ_API_KEY:
         required: false
-      # Vercel AI Gateway (free + paid). Optional: skipped when unset.
+      # Vercel AI Gateway — the paid `frontier` cascade. Optional: skipped when unset.
       AI_GATEWAY_API_KEY:
         required: false
 

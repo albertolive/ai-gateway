@@ -122,3 +122,33 @@ def test_all_providers_fail_is_502(gw, monkeypatch):
     with pytest.raises(urllib.error.HTTPError) as exc:
         _post(gw, {"messages": [{"role": "user", "content": "hi"}]})
     assert exc.value.code == 502
+
+
+def test_usage_event_logged_on_success(gw, monkeypatch, capsys):
+    monkeypatch.setattr(gateway, "complete",
+                        lambda *a, **kw: ("ok", "vercel/claude-opus-5"))
+    _post(gw, {"model": "frontier",
+               "messages": [{"role": "user", "content": "hi"}]})
+
+    out = capsys.readouterr().err
+    events = [json.loads(l) for l in out.splitlines() if '"event": "usage"' in l]
+    assert len(events) == 1
+    assert events[0]["cascade"] == "frontier"
+    assert events[0]["model"] == "vercel/claude-opus-5"
+    assert events[0]["status"] == "ok"
+    assert events[0]["elapsed_ms"] >= 0
+
+
+def test_usage_event_logged_on_failure(gw, monkeypatch, capsys):
+    def boom(*a, **kw):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(gateway, "complete", boom)
+    with pytest.raises(urllib.error.HTTPError):
+        _post(gw, {"messages": [{"role": "user", "content": "hi"}]})
+
+    out = capsys.readouterr().err
+    events = [json.loads(l) for l in out.splitlines() if '"event": "usage"' in l]
+    assert len(events) == 1
+    assert events[0]["status"] == "error"
+    assert events[0]["model"] is None

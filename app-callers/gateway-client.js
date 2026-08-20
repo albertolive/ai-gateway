@@ -11,10 +11,11 @@
 //   const { complete } = require("./gateway-client");
 //   const text = await complete("Summarize this weather forecast: ...");
 //   const text = await complete("...", { cascade: "deepseek_cheap" }); // paid, needs DEEPSEEK_API_KEY
-//   const text = await complete("...", { cascade: "vercel" }); // Vercel AI Gateway, needs AI_GATEWAY_API_KEY
+//   const text = await complete("...", { cascade: "frontier" }); // frontier: Vercel, then direct Anthropic/OpenAI keys
 //
 // Env: one API key per provider you use (OPENROUTER_API_KEY, DEEPSEEK_API_KEY,
-//      GEMINI_API_KEY, GROQ_API_KEY, AI_GATEWAY_API_KEY). Only providers with a key set are tried.
+//      GEMINI_API_KEY, GROQ_API_KEY, AI_GATEWAY_API_KEY, ANTHROPIC_API_KEY,
+//      OPENAI_API_KEY). Only providers with a key set are tried.
 //      Any key can hold several comma- or whitespace-separated values
 //      (e.g. AI_GATEWAY_API_KEY="acct1,acct2") to fail over across accounts.
 

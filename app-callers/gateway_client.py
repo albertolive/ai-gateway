@@ -11,11 +11,11 @@ Usage:
     from gateway_client import complete
     text = complete("Summarize this weather forecast: ...")
     text = complete("...", cascade="deepseek_cheap")  # paid, needs DEEPSEEK_API_KEY
-    text = complete("...", cascade="vercel")  # Vercel AI Gateway, needs AI_GATEWAY_API_KEY
+    text = complete("...", cascade="frontier")  # frontier: Vercel, then direct Anthropic/OpenAI keys
 
 Env: one API key per provider you use (OPENROUTER_API_KEY, DEEPSEEK_API_KEY,
-     GEMINI_API_KEY, GROQ_API_KEY, AI_GATEWAY_API_KEY). Only providers with a
-     key set are tried. Any key can hold several comma- or whitespace-separated
+     GEMINI_API_KEY, GROQ_API_KEY, AI_GATEWAY_API_KEY, ANTHROPIC_API_KEY,
+     OPENAI_API_KEY). Only providers with a key set are tried. Any key can hold several comma- or whitespace-separated
      values (e.g. AI_GATEWAY_API_KEY="acct1,acct2") to fail over across
      multiple accounts' credit pools.
 """

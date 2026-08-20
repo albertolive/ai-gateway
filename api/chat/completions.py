@@ -1,7 +1,7 @@
 """Hosted ai-gateway endpoint (Vercel function, stdlib only).
 
 Serves an OpenAI-compatible POST /api/chat/completions. The `model` field is a
-CASCADE name (general, code_review, creative, vercel, deepseek_cheap, ...), not
+CASCADE name (general, code_review, creative, frontier, deepseek_cheap, ...), not
 a provider model id — the whole point of the gateway is that repos name an
 intent and models.json decides the provider/model/key.
 
@@ -16,11 +16,16 @@ Env (all held centrally in the Vercel project, never in repos):
   GROQ_API_KEY         Groq provider
   DEEPSEEK_API_KEY     DeepSeek provider
   AI_GATEWAY_API_KEY   Vercel AI Gateway provider (comma-separated = multi-account)
+  ANTHROPIC_API_KEY    Anthropic (Claude) direct provider, frontier fallback tier
+  OPENAI_API_KEY       OpenAI direct provider, frontier fallback tier
   AI_GATEWAY_BUDGET_S  cascade budget override (capped at 280s: Vercel Hobby's
                        300s invocation ceiling minus margin)
 
 Deploy: `vercel.json` bundles this repo; Vercel serves api/chat/completions.py
 at /api/chat/completions. Run locally with `scripts/serve.py`.
+
+Every request emits one flat JSON `usage` line to stdout (cascade/model/status/
+elapsed_ms) so fleet-wide usage is measurable; aggregate with `scripts/usage.py`.
 """
 
 import json
@@ -52,6 +57,30 @@ def _budget():
     except ValueError:
         value = _SERVER_BUDGET_CAP
     return min(value, _SERVER_BUDGET_CAP)
+
+
+def _elapsed_ms(started):
+    return int((time.monotonic() - started) * 1000)
+
+
+def _log_usage(cascade, model, status, elapsed_ms):
+    """Emit one parseable usage event per request for fleet-wide observability.
+
+    Written to stderr (not stdout) so it is flushed immediately: Python buffers
+    stdout when it is not a TTY, and a warm Vercel function does not flush that
+    buffer between requests, so a final stdout line can be lost. stderr is
+    line-buffered/unbuffered, so the event always lands. `scripts/usage.py`
+    aggregates these from `vercel logs`. Flat JSON (no nesting) so a single
+    regex can extract it from noisy log output.
+    """
+    print(json.dumps({
+        "event": "usage",
+        "cascade": cascade,
+        "model": model,
+        "status": status,
+        "elapsed_ms": elapsed_ms,
+        "created": int(time.time()),
+    }), file=sys.stderr)
 
 
 def _authorized(headers):
@@ -113,6 +142,7 @@ class handler(BaseHTTPRequestHandler):
             _send(self, 400, {"error": {"message": "invalid JSON body"}})
             return
 
+        started = time.monotonic()
         try:
             text, used = gateway.complete(
                 prompt,
@@ -124,8 +154,10 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             # The cascade raises RuntimeError with the per-provider errors when
             # everything is skipped or down; surface it as an upstream failure.
+            _log_usage(cascade, None, "error", _elapsed_ms(started))
             _send(self, 502, {"error": {"message": f"all providers failed: {e}"}})
             return
+        _log_usage(cascade, used, "ok", _elapsed_ms(started))
 
         _send(self, 200, {
             "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",

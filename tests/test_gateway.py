@@ -123,6 +123,14 @@ class TestProviders:
         assert gateway.PROVIDERS["vercel"]["url"] == "https://ai-gateway.vercel.sh/v1"
         assert gateway.PROVIDERS["vercel"]["key_env"] == "AI_GATEWAY_API_KEY"
 
+    def test_anthropic_provider_configured(self):
+        assert gateway.PROVIDERS["anthropic"]["url"] == "https://api.anthropic.com/v1"
+        assert gateway.PROVIDERS["anthropic"]["key_env"] == "ANTHROPIC_API_KEY"
+
+    def test_openai_provider_configured(self):
+        assert gateway.PROVIDERS["openai"]["url"] == "https://api.openai.com/v1"
+        assert gateway.PROVIDERS["openai"]["key_env"] == "OPENAI_API_KEY"
+
 
 class TestPaidTail:
     """The code_review cascade ends in a paid provider, reached only when the free tier is gone.
@@ -151,37 +159,49 @@ class TestPaidTail:
         assert all(e["key_env"] != "DEEPSEEK_API_KEY" for e in gen)
 
 
-class TestVercel:
-    """Vercel AI Gateway integration: provider, dedicated cascade, free failover tier.
+class TestFrontier:
+    """Vercel AI Gateway is the PAID frontier tier, opt-in via AI_GATEWAY_API_KEY.
 
-    Vercel is opt-in via AI_GATEWAY_API_KEY (its key_env): repos/apps that never set the key never
-    reach Vercel — the free model is skipped and the paid tail is never billed. Mirrors the DeepSeek
-    opt-in: the KEY is the consent.
+    The key is the consent: repos that never set AI_GATEWAY_API_KEY never reach Vercel and never
+    spend. Frontier models live in their own `frontier` cascade only — the free cascades
+    (code_review/general/creative) stay Vercel-free so the $0 path never bills.
     """
 
-    def test_vercel_cascade_free_then_paid(self):
+    def test_frontier_cascade_models(self):
         cascades = gateway.load_cascades()
-        assert "vercel" in cascades
-        v = cascades["vercel"]
-        assert [e["model"] for e in v] == [
-            "poolside/laguna-s-2.1-free", "google/gemini-3.6-flash"]
-        assert all(e["key_env"] == "AI_GATEWAY_API_KEY" for e in v)
+        assert "frontier" in cascades
+        f = cascades["frontier"]
+        assert [e["model"] for e in f] == [
+            "anthropic/claude-opus-5",
+            "openai/gpt-5.6-sol",
+            "google/gemini-3.1-pro-preview",
+            "claude-opus-5",
+            "gpt-5.6-sol",
+        ]
+        # Vercel first (one bill), then direct Anthropic/OpenAI keys as independent
+        # fallback tiers: same token price, separate billing path.
+        assert [e["key_env"] for e in f] == [
+            "AI_GATEWAY_API_KEY",
+            "AI_GATEWAY_API_KEY",
+            "AI_GATEWAY_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+        ]
+        assert [e["name"] for e in f] == [
+            "vercel/anthropic/claude-opus-5",
+            "vercel/openai/gpt-5.6-sol",
+            "vercel/google/gemini-3.1-pro-preview",
+            "anthropic/claude-opus-5",
+            "openai/gpt-5.6-sol",
+        ]
 
-    def test_free_vercel_tier_is_late_failover(self):
-        # The free Vercel model sits AFTER the established free tiers and BEFORE the
-        # openrouter/free safety net, so it only fires when OpenRouter/Gemini/Groq are exhausted.
+    def test_frontier_stays_out_of_free_cascades(self):
+        # The free cascades must never bill: paid frontier keys (Vercel, Anthropic,
+        # OpenAI) belong only to `frontier`.
         cascades = gateway.load_cascades()
-        for intent in ("code_review", "general"):
-            models = [e["model"] for e in cascades[intent]]
-            assert "poolside/laguna-s-2.1-free" in models
-            assert models.index("poolside/laguna-s-2.1-free") < models.index("openrouter/free")
-
-    def test_vercel_stays_out_of_creative_and_deepseek(self):
-        # Vercel belongs to its own cascade and the review/general failover, not the
-        # prose `creative` cascade or the DeepSeek-only paid cascade.
-        cascades = gateway.load_cascades()
-        assert all(e["key_env"] != "AI_GATEWAY_API_KEY" for e in cascades["creative"])
-        assert all(e["key_env"] != "AI_GATEWAY_API_KEY" for e in cascades["deepseek_cheap"])
+        paid = ("AI_GATEWAY_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
+        for intent in ("code_review", "general", "creative", "deepseek_cheap"):
+            assert all(e["key_env"] not in paid for e in cascades[intent]), intent
 
 
 class TestProviderKeys:

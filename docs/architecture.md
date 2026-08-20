@@ -59,7 +59,7 @@ Why Vercel Hobby (verified against Vercel docs, 2026-08):
 
 - `POST /api/chat/completions`, OpenAI chat-completions shape.
 - `model` field = **cascade name** (`general`, `code_review`, `creative`,
-  `vercel`, `deepseek_cheap`, …). Unknown cascade → `400` listing valid names.
+  `frontier`, `deepseek_cheap`, …). Unknown cascade → `400` listing valid names.
 - `messages` = system + user/assistant turns (flattened into one prompt).
 - Auth: `Authorization: Bearer $GATEWAY_TOKEN`.
 - Success: `200` with `choices[0].message.content` and `model` = the provider
@@ -77,6 +77,8 @@ Why Vercel Hobby (verified against Vercel docs, 2026-08):
 | `GROQ_API_KEY` | Groq provider |
 | `DEEPSEEK_API_KEY` | DeepSeek provider |
 | `AI_GATEWAY_API_KEY` | Vercel AI Gateway provider (comma-separated keys = multi-account failover) |
+| `ANTHROPIC_API_KEY` | Anthropic (Claude) direct provider — `frontier` fallback tier |
+| `OPENAI_API_KEY` | OpenAI direct provider — `frontier` fallback tier |
 | `AI_GATEWAY_BUDGET_S` | Cascade wall-clock budget, capped at 280s in the server |
 
 ### Vercel free-tier constraint
@@ -91,8 +93,9 @@ already bounded by the remaining budget in `gateway.py`.
 - Streaming responses.
 - Structured-output passthrough (`response_format` / JSON schema) — the cascade
   supports schema internally for CI, but the hosted endpoint returns text only.
-- Central spend/observability dashboard (Vercel function logs + the `model`
-  field in each response are the first cut).
+- Persistent usage counter / dashboard — the gateway now logs one flat JSON
+  `usage` line per request (aggregate with `scripts/usage.py`), but Vercel
+  Hobby log retention is short and there's no durable store yet.
 
 ## Rollout
 
