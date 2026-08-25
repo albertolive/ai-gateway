@@ -73,6 +73,19 @@ _NO_RETRY_CAP = re.compile(
     re.I,
 )
 
+# Wall clock per single provider attempt (seconds). Free-tier providers
+# occasionally queue generations for 60-90s+ (Gemini flash-lite, Aug 2026);
+# a stalled attempt should fail over to the next cascade entry rather than
+# hold the client. Tunable via AI_GATEWAY_ATTEMPT_TIMEOUT_S.
+def _attempt_timeout_s():
+    raw = os.environ.get("AI_GATEWAY_ATTEMPT_TIMEOUT_S", "")
+    try:
+        val = float(raw) if raw.strip() else 30.0
+    except ValueError:
+        print(f"  ! ignoring invalid AI_GATEWAY_ATTEMPT_TIMEOUT_S={raw!r}, using 30s")
+        val = 30.0
+    return max(5.0, min(val, 240.0))
+
 
 def _provider_keys(key_env):
     """Return all configured keys for a provider, in failover order.
@@ -248,9 +261,12 @@ def complete(prompt, system=None, intent="general", schema=None,
                 try:
                     # Never let one call outlive the budget: a provider that streams slowly used
                     # to blow past the 120s socket timeout because that timeout is per read, not
-                    # total.
+                    # total. Also cap each ATTEMPT well below the cascade budget: free-tier
+                    # providers (observed Aug 2026 on Gemini flash-lite) sometimes queue a
+                    # generation for 60-90s+ instead of answering — failing that attempt fast
+                    # and moving to the next cascade entry beats hanging the client.
                     text = _post_chat(provider["url"], api_key, payload,
-                                      timeout=max(1, min(120, left())))
+                                      timeout=max(1, min(_attempt_timeout_s(), left())))
                     if schema:
                         # Some models wrap JSON in markdown fences; strip them.
                         cleaned = text.strip()
