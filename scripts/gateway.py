@@ -48,6 +48,10 @@ def load_cascades(path=_CONFIG_PATH):
                 "name": f"{e['provider']}/{e['model']}",
                 "url": p["url"], "key_env": p["key_env"],
                 "model": e["model"], "structured": e.get("structured", "json_object"),
+                # Per-entry extra request-body params (e.g. groq's
+                # reasoning_effort for gpt-oss models) — merged into the
+                # payload by the cascade loop.
+                "extra": e.get("extra"),
                 # vision: False on entries whose model rejects image content parts
                 # (deepseek, groq's llama) so a vision request SKIPS them instead of
                 # burning a guaranteed 400 round-trip per provider before failing over.
