@@ -70,11 +70,13 @@ class TestLoadCascades:
         # Leads with Groq: fastest generation (~1-5s) and its failure mode
         # is a fast explicit 429 with Retry-After, vs Gemini flash-lite
         # which was observed silently queueing generations for 40-90s+
-        # (Aug 25, 2026 live probes). Gemini stays as capacity fallback.
+        # (Aug 25, 2026 live probes). gpt-oss needs reasoning_effort=low
+        # (its hidden reasoning otherwise eats caption-sized token budgets).
         cascades = gateway.load_cascades()
         assert "creative" in cascades
         models = [e["model"] for e in cascades["creative"]]
-        assert models[0] == "llama-3.3-70b-versatile"
+        assert models[0] == "openai/gpt-oss-120b"
+        assert cascades["creative"][0]["extra"]["reasoning_effort"] == "low"
         assert "gemini-3.5-flash-lite" in models
         assert "google/gemma-4-26b-a4b-it:free" in models  # provider-diverse fallback
         assert "openrouter/free" in models  # safety net

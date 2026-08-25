@@ -101,13 +101,17 @@ def _provider_keys(key_env):
 def _post_chat(base_url, api_key, payload, timeout=120):
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
+        data=json.dumps(payload).encode(),
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             # OpenRouter attribution headers (optional, ignored by others)
             "HTTP-Referer": "https://github.com",
             "X-Title": "ai-gateway",
+            # Cloudflare in front of some providers (groq: error 1010) bans
+            # the default Python-urllib signature outright; a named client
+            # passes while still being honest about what we are.
+            "User-Agent": "ai-gateway/1.0 (fleet caption/categorization client)",
         },
         method="POST",
     )
@@ -239,6 +243,10 @@ def complete(prompt, system=None, intent="general", schema=None,
             "messages": msgs,
             "temperature": temperature,
         }
+        # Per-entry extra body params (e.g. groq's reasoning_effort for
+        # gpt-oss models — without "low" the hidden reasoning eats the
+        # whole max_tokens budget and content comes back empty).
+        payload.update(provider.get("extra") or {})
         if schema:
             if provider["structured"] == "json_schema":
                 payload["response_format"] = {
