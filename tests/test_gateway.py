@@ -160,7 +160,13 @@ class TestPaidTail:
         cr = gateway.load_cascades()["code_review"]
         # Everything before the paid tail is a free-tier provider.
         assert all(e["key_env"] != "DEEPSEEK_API_KEY" for e in cr[:-1])
-        assert len(cr) >= 6, "the free cascade must not have been shortened to reach paid sooner"
+        # 4 free providers across 3 distinct services (gemini, groq,
+        # openrouter) — provider diversity, not entry count, is what
+        # protects against a single free tier going down (Aug 2026: the
+        # old cohere+poolside leads died together on openrouter).
+        assert len(cr) >= 4
+        # provider diversity via resolved names ("provider/model")
+        assert len({e["name"].split("/")[0] for e in cr[:-1]}) >= 3
 
     def test_general_cascade_stays_free(self):
         # `general` is the default for any app that does not name a cascade, so a paid step here

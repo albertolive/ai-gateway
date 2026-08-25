@@ -55,6 +55,12 @@
         "provider": "openrouter",
         "model": "openrouter/free",
         "structured": "json_object"
+      },
+      {
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "structured": "json_object",
+        "vision": false
       }
     ],
     "general": [
