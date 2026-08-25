@@ -66,11 +66,17 @@ class TestLoadCascades:
         # Distinct from code_review/general because ai-gateway's own
         # code_review picks (cohere/north-mini-code:free) return empty
         # content on caption-style prompts -- verified live.
+        #
+        # Leads with Gemini free tiers, most generous first (flash-lite at
+        # 15 RPM/500 RPD, then flash at 5 RPM/20 RPD): in Aug 2026 the old
+        # OpenRouter-gemma-first order sat upstream-rate-limited for ~3.5
+        # days straight and every caller caption fell back to template text.
         cascades = gateway.load_cascades()
         assert "creative" in cascades
         models = [e["model"] for e in cascades["creative"]]
-        assert models[0] == "google/gemma-4-26b-a4b-it:free"
-        assert models[1] == "google/gemma-4-31b-it:free"
+        assert models[0] == "gemini-3.5-flash-lite"
+        assert models[1] == "gemini-3.6-flash"
+        assert "google/gemma-4-26b-a4b-it:free" in models  # provider-diverse fallback
         assert "openrouter/free" in models  # safety net
 
     def test_no_dead_qwen_model(self):
