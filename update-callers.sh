@@ -13,7 +13,9 @@ set -euo pipefail
 
 NEW_TAG="${1:?Usage: ./update-callers.sh v2 [--dry-run]}"
 DRY_RUN="${2:-}"
-FLEET_FILE="$(dirname "$0")/fleet-repos.txt"
+# Absolute: this script cd's into a temp workspace before reading the fleet file, so a
+# relative path resolves against the wrong directory and the loop reads nothing.
+FLEET_FILE="$(cd "$(dirname "$0")" && pwd)/fleet-repos.txt"
 
 if ! gh auth status &>/dev/null; then
   echo "❌ gh CLI not authenticated. Run: gh auth login" >&2
@@ -64,8 +66,11 @@ while IFS= read -r repo || [ -n "$repo" ]; do
     continue
   fi
 
-  # Replace any @vN, @vX.Y.Z or @main with the new tag
-  sed -i.bak "s|@v[0-9]\+\(\.[0-9]\+\)\{0,2\}|@$NEW_TAG|g; s|@main|@$NEW_TAG|g" "$wf"
+  # Replace any @vN, @vN.N, @vN.N.N or @main with the new tag.
+  # \{1,\} not \+ : BSD sed (macOS) treats \+ in a basic regex as a LITERAL plus, so the
+  # old pattern never matched, git saw no change, and the loop printed "already at <tag>".
+  # Every run reported success and did nothing — which is why repos stayed on @v1.0.0.
+  sed -i.bak "s|@v[0-9]\{1,\}\(\.[0-9]\{1,\}\)\{0,2\}|@$NEW_TAG|g; s|@main|@$NEW_TAG|g" "$wf"
   rm -f "$wf.bak"
 
   git add "$wf"
