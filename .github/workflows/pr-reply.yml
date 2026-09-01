@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: albertolive/ai-gateway
-          ref: v1.2.0
+          ref: v1.3.2
           path: gateway
           sparse-checkout: |
             scripts
@@ -49,6 +49,10 @@ jobs:
 
       - name: Generate and post reply
         env:
+          # Unbuffered, or every print flushes at exit and the log timestamps all
+          # collapse to the final second — which is how a 33-minute run on
+          # culturaCardedeu (2026-08-25) became undiagnosable after the fact.
+          PYTHONUNBUFFERED: "1"
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           COMMENT_ID: ${{ github.event.comment.id }}

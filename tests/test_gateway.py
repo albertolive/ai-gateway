@@ -333,3 +333,71 @@ class TestMessagesForwarding:
         monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-key")
         gateway.complete("plain text", intent="deepseek_cheap")
         assert len(calls) == 1, "a text-only request may use a visionless provider"
+
+
+class TestNullContent:
+    """A provider answering with content=null must fail cleanly, not crash the attempt.
+
+    Observed live on culturaCardedeu#212 (2026-08-25): openrouter/cohere/north-mini-code:free
+    and openrouter/free both returned content=null, `["content"]` + `.strip()` raised
+    AttributeError, and the log read "AttributeError: 'NoneType' object has no attribute
+    'strip'" — indistinguishable from a dead provider.
+    """
+
+    def _resp(self, body):
+        """Fake urlopen returning `body` as the JSON payload."""
+        class FakeResp:
+            def read(self):
+                return json.dumps(body).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        return lambda req, timeout=None: FakeResp()
+
+    def test_null_content_raises_valueerror_not_attributeerror(self, monkeypatch):
+        monkeypatch.setattr(gateway.urllib.request, "urlopen",
+                            self._resp({"choices": [{"message": {"content": None}}]}))
+        with pytest.raises(ValueError, match="empty content"):
+            gateway._post_chat("https://x.test", "k", {})
+
+    def test_reasoning_content_is_used_when_content_is_null(self, monkeypatch):
+        monkeypatch.setattr(gateway.urllib.request, "urlopen", self._resp(
+            {"choices": [{"message": {"content": None,
+                                      "reasoning_content": '{"ok": true}'}}]}))
+        assert gateway._post_chat("https://x.test", "k", {}) == '{"ok": true}'
+
+    def test_empty_choices_raises_valueerror(self, monkeypatch):
+        monkeypatch.setattr(gateway.urllib.request, "urlopen", self._resp({"choices": []}))
+        with pytest.raises(ValueError, match="empty content"):
+            gateway._post_chat("https://x.test", "k", {})
+
+    def test_whitespace_only_content_raises_valueerror(self, monkeypatch):
+        monkeypatch.setattr(gateway.urllib.request, "urlopen",
+                            self._resp({"choices": [{"message": {"content": "  \n "}}]}))
+        with pytest.raises(ValueError, match="empty content"):
+            gateway._post_chat("https://x.test", "k", {})
+
+    def test_normal_content_still_returned(self, monkeypatch):
+        monkeypatch.setattr(gateway.urllib.request, "urlopen",
+                            self._resp({"choices": [{"message": {"content": "hello"}}]}))
+        assert gateway._post_chat("https://x.test", "k", {}) == "hello"
+
+    def test_null_content_falls_through_to_next_provider(self, monkeypatch):
+        """The whole point: one bad provider must not end the cascade."""
+        calls = []
+
+        def mock_post(base_url, api_key, payload, timeout=120):
+            calls.append(base_url)
+            if len(calls) == 1:
+                raise ValueError("empty content in response: {}")
+            return "recovered"
+
+        monkeypatch.setattr(gateway, "_post_chat", mock_post)
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        monkeypatch.setenv("GROQ_API_KEY", "fake-key")
+        result, _ = gateway.complete("p", intent="code_review")
+        assert result == "recovered"
+        assert len(calls) == 2

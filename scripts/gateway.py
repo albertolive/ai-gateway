@@ -121,7 +121,16 @@ def _post_chat(base_url, api_key, payload, timeout=120):
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = json.loads(resp.read().decode("utf-8"))
-    return body["choices"][0]["message"]["content"]
+    msg = (body.get("choices") or [{}])[0].get("message") or {}
+    # content is null on reasoning models that spend the whole budget thinking (they put
+    # the text in reasoning_content instead), and on some providers' refusal/filter paths.
+    # Observed live 2026-08-25: openrouter/cohere/north-mini-code:free and openrouter/free
+    # both returned content=null, and the bare ["content"] + .strip() below crashed with
+    # AttributeError — which reads as a dead provider in the log and burns the attempt.
+    text = msg.get("content") or msg.get("reasoning_content")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError(f"empty content in response: {json.dumps(body)[:200]}")
+    return text
 
 
 def _has_image_parts(messages):

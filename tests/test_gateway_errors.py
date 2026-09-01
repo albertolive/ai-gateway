@@ -364,5 +364,6 @@ class TestMultiKeyFailover:
 
         with pytest.raises(RuntimeError):
             gateway.complete("p", intent="code_review")
-        # code_review has three openrouter entries; two keys each = six calls, then give up.
-        assert calls == ["key1", "key2"] * 3
+        # code_review has one openrouter entry; two keys = two calls, then
+        # the cascade gives up (all other providers skipped: no key).
+        assert calls == ["key1", "key2"]

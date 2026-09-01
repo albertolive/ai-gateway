@@ -59,7 +59,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: albertolive/ai-gateway
-          ref: v1.2.0
+          ref: v1.3.2
           path: gateway
           sparse-checkout: |
             scripts

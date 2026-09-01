@@ -39,7 +39,7 @@ Scripts are **stdlib-only Python** — no `pip install`, no supply-chain surface
 ## Setup
 
 1. **Create the repo.** Push this directory to `github.com/<you>/ai-gateway`. Public is simplest. If private: Settings → Actions → General → Access → *Accessible from repositories owned by \<you/org\>*.
-2. **Replace the placeholder.** Search for `YOUR_GITHUB_USERNAME_OR_ORG` in `.github/workflows/*.yml`, `caller-templates/*.yml`, and `deploy-callers.sh`. Also, in all three reusable workflows (`pr-review.yml`, `pr-reply.yml`, `llm-task.yml`), change the gateway checkout `ref: main` to `ref: v1.2.0` (or your tagged release) so scripts are pinned along with the workflow — **never deploy with `ref: main`, it's the exact supply-chain anti-pattern this tool is designed to avoid**.
+2. **Replace the placeholder.** Search for `YOUR_GITHUB_USERNAME_OR_ORG` in `.github/workflows/*.yml`, `caller-templates/*.yml`, and `deploy-callers.sh`. Also, in all three reusable workflows (`pr-review.yml`, `pr-reply.yml`, `llm-task.yml`), change the gateway checkout `ref: main` to `ref: v1.3.2` (or your tagged release) so scripts are pinned along with the workflow — **never deploy with `ref: main`, it's the exact supply-chain anti-pattern this tool is designed to avoid**.
 3. **Get free API keys** (no card needed for any):
    - OpenRouter: https://openrouter.ai/keys
    - Google AI Studio: https://aistudio.google.com/apikey
@@ -50,9 +50,9 @@ Scripts are **stdlib-only Python** — no `pip install`, no supply-chain surface
    - **Personal repos:** no account-level secrets exist, so set per repo: `gh secret set OPENROUTER_API_KEY -R you/repo --body "sk-or-..."` (loop over repos, or let `deploy-callers.sh` remind you).
 5. **Tag a release.** Callers must pin a tag, never `@main`:
    ```bash
-   git tag v1.2.0 && git push origin v1.2.0
+   git tag v1.3.2 && git push origin v1.3.2
    ```
-   Then verify all three reusable workflows use `ref: v1.2.0` in their gateway checkout step (step 2 covers this).
+   Then verify all three reusable workflows use `ref: v1.3.2` in their gateway checkout step (step 2 covers this).
 6. **Add `.gitignore`.** The repo includes a `.gitignore` that excludes `__pycache__/`, generated CI outputs (`model_watch_report.md`, `pr_diff.txt`, `gateway_output.*`, etc.), and secret files. Don't track these — `model_watch_report.md` is a generated output of `check_models.py`, not a source file. If it's already tracked in a remote, untrack it with `git rm --cached model_watch_report.md`.
 7. **Enable model-watch bot PRs** (one-time, in the `ai-gateway` repo): Settings → Actions → General → Workflow permissions → check *Allow GitHub Actions to create and approve pull requests*. Optionally add the three API keys as repo secrets here too, so the watcher can also verify the Gemini and Groq models (it verifies OpenRouter without any key).
 8. **Deploy callers.** Edit `fleet-repos.txt` (one repo per line, `owner/repo` format), then run `./deploy-callers.sh` (needs `gh auth refresh -s workflow`). The script reads the fleet file and pushes the caller workflow to each repo.
@@ -70,9 +70,9 @@ Three scripts manage the entire fleet from this repo. All read `fleet-repos.txt`
 
 **Lifecycle of a gateway upgrade:**
 1. Edit code in `ai-gateway`, commit, push
-2. `git tag v1.2.0 && git push origin v1.2.0`
-3. `./update-callers.sh v1.2.0` — bumps all fleet repos to the new tag
-4. `./update-callers.sh v1.2.0 --dry-run` to preview before pushing
+2. `git tag v1.3.2 && git push origin v1.3.2`
+3. `./update-callers.sh v1.3.2` — bumps all fleet repos to the new tag
+4. `./update-callers.sh v1.3.2 --dry-run` to preview before pushing
 
 **Adding a new repo to the fleet:**
 1. Add it to `fleet-repos.txt`
@@ -81,7 +81,7 @@ Three scripts manage the entire fleet from this repo. All read `fleet-repos.txt`
 
 ## Testing
 
-The project has a test suite (152 tests) covering the diff parser, comment validator, impact analysis, context/docs resolution, lint/secrets scan, gateway cascade loading, model-watch ranking, learnings memory, workflow YAML validation, gateway error handling/failover, and reply/schema validation. Tests are pure-logic (no network calls) and use pytest.
+The project has a test suite (230 tests) covering the diff parser, comment validator, impact analysis, context/docs resolution, lint/secrets scan, gateway cascade loading, model-watch ranking, learnings memory, workflow YAML validation, gateway error handling/failover, and reply/schema validation. Tests are pure-logic (no network calls) and use pytest.
 
 ```bash
 python3 -m pytest tests/ -v
@@ -91,7 +91,7 @@ Tests live in `tests/` with a shared `conftest.py` that adds `scripts/` to the p
 
 ## Upgrading
 
-Edit centrally, tag `v1.2.0`, then bump the tag in callers when ready. Nothing breaks mid-flight because callers pin tags.
+Edit centrally, tag `v1.3.2`, then bump the tag in callers when ready. Nothing breaks mid-flight because callers pin tags.
 
 ## Customizing
 

@@ -115,17 +115,27 @@ def parse_diff(diff_text):
     return "\n".join(out), added
 
 
-def validate_comments(comments, added):
-    """Keep only comments that target real added lines."""
+def validate_comments(comments, added, dropped=None):
+    """Keep only comments that target real added lines.
+
+    Anything dropped here is appended to `dropped` (when given) so the caller can say so
+    in the summary. Silence was actively misleading: observed live on culturaCardedeu#212,
+    the model wrote "Found two bugs ... Both are fixed in the suggestions", both comments
+    failed validation, and the PR got a summary promising suggestions that weren't there.
+    """
     valid = []
     for c in comments:
         try:
             path, line = c["path"], int(c["line"])
             body = str(c["body"]).strip()
         except (KeyError, TypeError, ValueError):
+            if dropped is not None:
+                dropped.append(f"{c.get('path')}:{c.get('line')} (malformed)")
             continue
         if not body or line not in added.get(path, set()):
             print(f"  drop invalid comment target {c.get('path')}:{c.get('line')}")
+            if dropped is not None:
+                dropped.append(f"{c.get('path')}:{c.get('line')} (not an added line)")
             continue
         entry = {"path": path, "line": line, "side": "RIGHT", "body": body}
         start = c.get("start_line")
@@ -133,6 +143,8 @@ def validate_comments(comments, added):
             entry["start_line"] = start
             entry["start_side"] = "RIGHT"
         valid.append(entry)
+    if dropped is not None and len(valid) > 10:
+        dropped.append(f"{len(valid) - 10} more (over the 10-comment cap)")
     return valid[:10]
 
 
@@ -287,10 +299,20 @@ def main():
             print(f"Could not post the outage comment: {post_err}")
         return
 
-    comments = validate_comments(data.get("comments", []), added)
+    dropped = []
+    comments = validate_comments(data.get("comments", []), added, dropped)
     summary = (data.get("summary") or "Automated review complete.").strip()
     if mode.startswith("incremental"):
         summary = f"_Incremental review: {mode.split(' ', 1)[1]}_\n\n" + summary
+    if dropped:
+        # The summary was written before validation, so it may still promise findings that
+        # got dropped. Say so rather than leaving a comment that references nothing.
+        summary += ("\n\n> **Note:** the model raised "
+                    f"{len(dropped)} finding(s) that could not be anchored to a changed "
+                    "line, so they are not shown inline. Anything the summary mentions "
+                    "without a matching inline comment is one of these — treat it as a "
+                    "lead to check by hand, not a verified finding.\n>\n"
+                    + "\n".join(f"> - `{d}`" for d in dropped))
     summary += (f"\n\n---\n<sub>AI review via free-tier gateway ({provider})."
                 f" May be wrong — verify before acting.</sub>"
                 f"\n\n<!-- ai-gateway:last_reviewed_sha={sha} -->")
@@ -304,6 +326,11 @@ def main():
         return
     except urllib.error.HTTPError as e:
         print(f"Inline review rejected (HTTP {e.code}): {e.read().decode()[:300]}")
+    except (urllib.error.URLError, OSError) as e:
+        # A timeout or connection reset here used to escape and fail the job red, skipping
+        # the fallback entirely — the same "outage reported as a code failure" this script
+        # already avoids for an exhausted cascade.
+        print(f"Inline review failed ({type(e).__name__}: {e})")
 
     parts = [summary]
     for c in comments:

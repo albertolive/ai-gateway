@@ -177,6 +177,54 @@ class TestValidateComments:
         valid = review.validate_comments(comments, added)
         assert len(valid) == 0
 
+    def test_dropped_list_records_unanchorable_comments(self):
+        """The summary is written before validation, so drops must be reportable.
+
+        Live on culturaCardedeu#212 the model wrote "Found two bugs ... Both are fixed in
+        the suggestions", both comments failed validation, and the PR got a summary
+        promising suggestions that did not exist.
+        """
+        added = {"src/main.py": {5}}
+        comments = [{"path": "src/main.py", "line": 999, "body": "Wrong line."},
+                    {"path": "gone.py", "line": 5, "body": "Wrong file."}]
+        dropped = []
+        valid = review.validate_comments(comments, added, dropped)
+        assert valid == []
+        assert len(dropped) == 2
+        assert "src/main.py:999" in dropped[0]
+        assert "gone.py:5" in dropped[1]
+
+    def test_dropped_list_records_malformed_comments(self):
+        added = {"src/main.py": {5}}
+        dropped = []
+        review.validate_comments([{"body": "no path or line"}], added, dropped)
+        assert len(dropped) == 1
+        assert "malformed" in dropped[0]
+
+    def test_dropped_list_records_cap_overflow(self):
+        added = {"src/main.py": set(range(1, 101))}
+        comments = [{"path": "src/main.py", "line": i, "body": f"Issue {i}"}
+                    for i in range(1, 16)]
+        dropped = []
+        valid = review.validate_comments(comments, added, dropped)
+        assert len(valid) == 10
+        assert len(dropped) == 1
+        assert "5 more" in dropped[0]
+
+    def test_dropped_list_empty_when_all_valid(self):
+        added = {"src/main.py": {5}}
+        dropped = []
+        valid = review.validate_comments(
+            [{"path": "src/main.py", "line": 5, "body": "ok"}], added, dropped)
+        assert len(valid) == 1
+        assert dropped == []
+
+    def test_dropped_arg_is_optional(self):
+        """Existing callers pass two args; that must keep working."""
+        added = {"src/main.py": {5}}
+        assert review.validate_comments(
+            [{"path": "src/main.py", "line": 999, "body": "x"}], added) == []
+
 
 # ---------------------------------------------------------------------------
 # cascade exhaustion (provider outage) must not read as a code failure

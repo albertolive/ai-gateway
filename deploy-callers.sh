@@ -11,7 +11,7 @@
 set -euo pipefail
 
 GATEWAY_OWNER="albertolive"
-VERSION_TAG="v1.2.0"
+VERSION_TAG="v1.3.2"
 FLEET_FILE="$(dirname "$0")/fleet-repos.txt"
 
 # Read repo list from fleet-repos.txt (one per line, # = comment)
@@ -114,5 +114,5 @@ echo
 echo "✅ Callers deployed to ${#TARGET_REPOSITORIES[@]} repos."
 echo "Next steps:"
 echo "  1. Set API keys: ./set-secrets.sh"
-echo "  2. To update the gateway version later: ./update-callers.sh v1.2.0"
+echo "  2. To update the gateway version later: ./update-callers.sh v1.3.2"
 echo "  3. To check secret status: ./set-secrets.sh --list"
