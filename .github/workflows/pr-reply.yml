@@ -39,8 +39,14 @@ jobs:
       - name: Fetch gateway scripts
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          repository: albertolive/ai-gateway
-          ref: v1.3.2
+          # Check out the EXACT commit of the workflow that is running, not a hand-kept tag.
+          # Every reusable workflow here fetches its own scripts, so a literal ref was a
+          # SECOND pin per caller — and it drifted: callers asked for v1.3.1, which asked for
+          # v1.2.0, which asked for v1.0.0, so 12 repos ran the first release for months.
+          # job.workflow_sha is GitHub's answer to this (documented for precisely this case)
+          # and cannot disagree with itself, so callers may now float on @v1 safely.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: gateway
           sparse-checkout: |
             scripts

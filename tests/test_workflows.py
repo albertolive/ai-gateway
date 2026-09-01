@@ -198,107 +198,85 @@ class TestConcurrency:
 
 
 class TestGatewayRefPinning:
-    """Gateway checkout should pin a versioned tag, not ref: main."""
+    """The scripts a caller runs must be the workflow it asked for — structurally.
 
-    def test_gateway_checkout_pinned(self):
+    History: every reusable workflow here fetches its own scripts, so each caller carried
+    TWO pins. They drifted silently — callers asked for @v1.3.1, whose workflow checked out
+    `ref: v1.2.0`, whose workflow checked out `ref: v1.0.0`. Twelve repos ran the first
+    release for months (four dead providers, no wall-clock budget, no outage soft-fail) and
+    no test objected, because each pin was individually valid.
+
+    The fix is not a tighter assertion, it is removing the second pin: the workflow checks
+    itself out at `job.workflow_sha`, which GitHub resolves to the exact commit already
+    running. A value that is derived cannot disagree with itself, so callers can float on a
+    major tag (@v1) and never be hand-bumped again.
+    """
+
+    _SELF_CHECKOUT = "${{ job.workflow_sha }}"
+
+    def test_gateway_checkout_uses_workflow_sha(self):
+        """No literal ref for the gateway checkout — that was the second pin."""
         wf_dir = os.path.abspath(_WORKFLOW_DIRS[0])
+        checked = 0
         for name in ["pr-review.yml", "pr-reply.yml", "llm-task.yml"]:
             path = os.path.join(wf_dir, name)
             if not os.path.exists(path):
                 continue
             with open(path, encoding="utf-8") as f:
                 content = f.read()
-            # Gateway checkout should pin a versioned release tag (ref: vX.Y.Z)
-            if "repository:" in content and "ai-gateway" in content:
-                assert re.search(r"ref: v\d+\.\d+\.\d+", content), \
-                    f"{name}: gateway checkout should pin a versioned tag (ref: vX.Y.Z)"
-                assert "ref: main" not in content, \
-                    f"{name}: gateway checkout still uses ref: main"
+            m = re.search(r"repository: (.+)\n\s*ref: (.+)", content)
+            if not m:
+                continue
+            checked += 1
+            repo_val, ref_val = m.group(1).strip(), m.group(2).strip()
+            assert "job.workflow_repository" in repo_val, (
+                f"{name}: gateway checkout should use "
+                "${{ job.workflow_repository }}, got: " + repo_val)
+            assert ref_val == self._SELF_CHECKOUT, (
+                f"{name}: gateway checkout must use {self._SELF_CHECKOUT} so the scripts "
+                f"match the running workflow; a literal ref ({ref_val}) is a second pin "
+                "that drifts — that is the v1.3.1 -> v1.2.0 -> v1.0.0 bug.")
+        assert checked, "no gateway checkout found in any reusable workflow"
 
-    def test_all_pins_agree(self):
-        """Every version pin in the repo must name the SAME release.
-
-        This is the bug that made the fleet useless for months and nothing caught it:
-        each reusable workflow fetches its OWN scripts by tag, so there are two pins per
-        caller and they drifted. Callers asked for @v1.3.1, whose workflow said
-        `ref: v1.2.0`, whose workflow said `ref: v1.0.0` — so 12 repos ran the very first
-        release, with four dead providers and none of the fixes. Asserting mutual agreement
-        works at any commit (unlike comparing against the newest git tag, which cannot
-        exist yet on the commit that is about to be tagged).
-        """
+    def test_callers_float_on_major_tag(self):
+        """Caller templates pin @vN, so a release never requires touching 12 repos."""
         repo_root = os.path.abspath(os.path.join(_WORKFLOW_DIRS[0], "..", ".."))
-        wf_dir = os.path.abspath(_WORKFLOW_DIRS[0])
-        pins = {}  # "where" -> tag
-
-        for name in ["pr-review.yml", "pr-reply.yml", "llm-task.yml"]:
-            path = os.path.join(wf_dir, name)
-            if not os.path.exists(path):
-                continue
-            with open(path, encoding="utf-8") as f:
-                content = f.read()
-            m = re.search(r"repository: \S*ai-gateway\s*\n\s*ref: (v\d+\.\d+\.\d+)",
-                          content)
-            if m:
-                pins[f"{name} (gateway checkout ref)"] = m.group(1)
-
-        script = os.path.join(repo_root, "deploy-callers.sh")
-        if os.path.exists(script):
-            with open(script, encoding="utf-8") as f:
-                m = re.search(r'VERSION_TAG="(v\d+\.\d+\.\d+)"', f.read())
-            if m:
-                pins["deploy-callers.sh VERSION_TAG"] = m.group(1)
-
         tpl_dir = os.path.join(repo_root, "caller-templates")
-        if os.path.isdir(tpl_dir):
-            for name in sorted(os.listdir(tpl_dir)):
-                if not name.endswith((".yml", ".yaml")):
-                    continue
-                with open(os.path.join(tpl_dir, name), encoding="utf-8") as f:
-                    for i, line in enumerate(f, 1):
-                        m = re.search(r"uses: \S*ai-gateway/\S+@(v\d+\.\d+\.\d+)", line)
-                        if m:
-                            pins[f"caller-templates/{name}:{i}"] = m.group(1)
+        if not os.path.isdir(tpl_dir):
+            pytest.skip("no caller-templates/")
+        found = 0
+        for name in sorted(os.listdir(tpl_dir)):
+            if not name.endswith((".yml", ".yaml")):
+                continue
+            with open(os.path.join(tpl_dir, name), encoding="utf-8") as f:
+                for i, line in enumerate(f, 1):
+                    m = re.search(r"uses: \S*ai-gateway/\S+@(\S+)", line)
+                    if not m:
+                        continue
+                    found += 1
+                    ref = m.group(1)
+                    assert re.fullmatch(r"v\d+", ref), (
+                        f"caller-templates/{name}:{i}: callers should float on a major tag "
+                        f"(@v1) so releases do not require a fleet-wide bump; got @{ref}")
+        assert found, "no caller `uses:` lines found to check"
 
-        assert pins, "found no version pins to check — did the layout change?"
-        distinct = sorted(set(pins.values()))
-        assert len(distinct) == 1, (
-            "version pins disagree, so callers will execute a different release than "
-            f"they name: {distinct}\n"
-            + "\n".join(f"  {v}  <- {k}" for k, v in sorted(pins.items()))
-        )
-
-    def test_pinned_ref_is_not_stale(self):
-        """The scripts at the pinned tag must be the scripts on HEAD.
-
-        Mutual agreement between pins is not enough: every pin said v1.2.0 while HEAD was
-        v1.3.1, so the fleet consistently ran code that was two releases behind and no test
-        objected. What callers actually execute is `scripts/` + `models.json` AT THE PINNED
-        TAG, so that tree is what has to be current. Bump the pins (and re-tag) whenever
-        either changes.
-        """
+    def test_deploy_script_uses_major_tag(self):
         repo_root = os.path.abspath(os.path.join(_WORKFLOW_DIRS[0], "..", ".."))
-        path = os.path.join(os.path.abspath(_WORKFLOW_DIRS[0]), "pr-review.yml")
-        if not os.path.exists(path):
-            pytest.skip("pr-review.yml not present")
-        with open(path, encoding="utf-8") as f:
-            m = re.search(r"repository: \S*ai-gateway\s*\n\s*ref: (v\d+\.\d+\.\d+)",
-                          f.read())
-        if not m:
-            pytest.skip("no pinned gateway ref found")
-        pinned = m.group(1)
+        script = os.path.join(repo_root, "deploy-callers.sh")
+        if not os.path.exists(script):
+            pytest.skip("no deploy-callers.sh")
+        with open(script, encoding="utf-8") as f:
+            m = re.search(r'VERSION_TAG="(\S+)"', f.read())
+        assert m, "deploy-callers.sh: no VERSION_TAG found"
+        assert re.fullmatch(r"v\d+", m.group(1)), (
+            "deploy-callers.sh: VERSION_TAG should be a floating major tag (v1), "
+            f"matching the caller templates; got {m.group(1)}")
 
-        if subprocess.run(["git", "rev-parse", "--verify", f"{pinned}^{{commit}}"],
-                          cwd=repo_root, capture_output=True).returncode != 0:
-            pytest.skip(f"tag {pinned} not available (shallow clone without tags)")
-
-        r = subprocess.run(
-            ["git", "diff", "--name-only", pinned, "HEAD", "--", "scripts", "models.json"],
-            cwd=repo_root, capture_output=True, text=True)
-        assert r.returncode == 0, f"git diff failed: {r.stderr.strip()}"
-        changed = [ln for ln in r.stdout.splitlines() if ln.strip()]
-        assert not changed, (
-            f"pinned ref {pinned} is stale: callers fetch their scripts from {pinned}, but "
-            "these files have changed on HEAD, so the fleet runs old code:\n"
-            + "\n".join(f"  {c}" for c in changed)
-            + f"\nBump every pin to the next release and tag it (currently {pinned})."
-        )
+    def test_no_ref_main_anywhere(self):
+        """`ref: main` in a reusable workflow is the supply-chain anti-pattern."""
+        wf_dir = os.path.abspath(_WORKFLOW_DIRS[0])
+        for name in sorted(os.listdir(wf_dir)):
+            if not name.endswith((".yml", ".yaml")):
+                continue
+            with open(os.path.join(wf_dir, name), encoding="utf-8") as f:
+                assert "ref: main" not in f.read(), f"{name}: uses ref: main"

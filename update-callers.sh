@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Update the gateway version tag in all fleet repos' caller workflows.
 #
-# When you tag a new release (v1.2.0, v2.0.0, etc.), run this to bump
-# the @vX.Y.Z reference in every repo's .github/workflows/ai-review.yml.
+# You should rarely need this. Callers float on the major tag (@v1), so a normal
+# release reaches the fleet with `git tag -f v1 && git push -f origin v1` and no
+# per-repo edit. Run this only for a MAJOR bump (@v1 -> @v2), which by design does
+# not arrive automatically, or to migrate repos still on an old exact tag.
 #
 # Usage:
-#   ./update-callers.sh v1.2.0           # bump to v1.2.0
-#   ./update-callers.sh v1.2.0 --dry-run # show what would change without pushing
+#   ./update-callers.sh v2           # move the fleet to the v2 major line
+#   ./update-callers.sh v2 --dry-run # show what would change without pushing
 set -euo pipefail
 
-NEW_TAG="${1:?Usage: ./update-callers.sh v1.2.0 [--dry-run]}"
+NEW_TAG="${1:?Usage: ./update-callers.sh v2 [--dry-run]}"
 DRY_RUN="${2:-}"
 FLEET_FILE="$(dirname "$0")/fleet-repos.txt"
 
@@ -62,8 +64,8 @@ while IFS= read -r repo || [ -n "$repo" ]; do
     continue
   fi
 
-  # Replace any @vX.Y.Z or @main with the new tag
-  sed -i.bak "s|@v[0-9]\+\.[0-9]\+\.[0-9]\+|@$NEW_TAG|g; s|@main|@$NEW_TAG|g" "$wf"
+  # Replace any @vN, @vX.Y.Z or @main with the new tag
+  sed -i.bak "s|@v[0-9]\+\(\.[0-9]\+\)\{0,2\}|@$NEW_TAG|g; s|@main|@$NEW_TAG|g" "$wf"
   rm -f "$wf.bak"
 
   git add "$wf"
