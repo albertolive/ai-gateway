@@ -1,5 +1,5 @@
 # Drop this file into any repo at .github/workflows/ai-review.yml
-# Replace albertolive. Pin to a release tag, never @main.
+# Replace albertolive. Pin @v1 (floating major) — releases arrive automatically.
 #
 # Two behaviors in one file:
 # - pull_request: full/incremental AI review with inline comments

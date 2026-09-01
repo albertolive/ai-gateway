@@ -9,6 +9,7 @@ Validates that all .github/workflows/*.yml and caller-templates/*.yml files:
 - Use persist-credentials: false on checkout steps
 """
 
+import json
 import os
 import re
 import subprocess
@@ -280,3 +281,70 @@ class TestGatewayRefPinning:
                 continue
             with open(os.path.join(wf_dir, name), encoding="utf-8") as f:
                 assert "ref: main" not in f.read(), f"{name}: uses ref: main"
+
+
+class TestDocsDoNotCopyModelIds:
+    """Docs must point at models.json, never restate it.
+
+    The README used to carry a cascade table. Within weeks every model in it was dead
+    (cohere/north-mini-code:free, poolside/laguna-m.1:free, gemini-2.0-flash,
+    llama-3.3-70b-versatile all 404/403), and a note above it said the IDs were "verified,
+    not assumed". Same failure as the version pins: two copies of a fast-moving fact, each
+    internally consistent, nothing checking they agreed. Since free-tier model IDs rot every
+    few weeks, the only stable doc is a pointer — so this fails if a doc names a model that
+    models.json no longer pins, which is exactly when the doc has gone stale.
+    """
+
+    _DOCS = ["README.md", os.path.join("docs", "architecture.md")]
+
+    def _repo_root(self):
+        return os.path.abspath(os.path.join(_WORKFLOW_DIRS[0], "..", ".."))
+
+    def _pinned_models(self):
+        root = self._repo_root()
+        with open(os.path.join(root, "models.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+        return {e["model"] for c in cfg["cascades"].values() for e in c}
+
+    def test_docs_name_no_unpinned_models(self):
+        root = self._repo_root()
+        pinned = self._pinned_models()
+        # Match only things that really are model IDs: a known AI vendor namespace, a
+        # `:free` suffix, or a family name carrying a version number. Vendors change far
+        # more slowly than model IDs, so this list is stable in a way a model table is not.
+        vendors = (r"openrouter|openai|google|anthropic|groq|deepseek|cohere|poolside"
+                   r"|meta-llama|mistralai|nvidia|qwen|moonshotai|z-ai|minimax|vercel")
+        families = (r"gpt|gemini|claude|llama|deepseek|kimi|glm|qwen|gemma|grok|minimax"
+                    r"|mistral|nemotron|opus|sonnet|haiku")
+        pattern = re.compile(
+            r"`((?:" + vendors + r")/[a-z0-9][a-z0-9./:_-]*"          # openrouter/free
+            r"|[a-z0-9][a-z0-9./_-]*:free"                            # anything :free
+            r"|(?:" + families + r")[a-z0-9._-]*[0-9][a-z0-9._:-]*)`",  # gemini-2.0-flash
+            re.I)
+        offenders = []
+        for rel in self._DOCS:
+            path = os.path.join(root, rel)
+            if not os.path.exists(path):
+                continue
+            for i, line in enumerate(open(path, encoding="utf-8"), 1):
+                for m in pattern.finditer(line):
+                    name = m.group(1)
+                    if name in pinned:
+                        continue
+                    # Env vars, headers and paths are not model ids.
+                    if name.endswith((".py", ".json", ".yml", ".md", ".sh", ".txt")):
+                        continue
+                    offenders.append(f"{rel}:{i}: `{name}`")
+        assert not offenders, (
+            "docs name model IDs that models.json does not pin — the doc is stale, or it "
+            "copied a fact that belongs only in models.json:\n"
+            + "\n".join(f"  {o}" for o in offenders)
+            + "\nPrefer pointing at models.json over restating it."
+        )
+
+    def test_readme_points_at_models_json(self):
+        root = self._repo_root()
+        with open(os.path.join(root, "README.md"), encoding="utf-8") as f:
+            content = f.read()
+        assert "models.json" in content, (
+            "README must point readers at models.json for the live cascade")

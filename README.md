@@ -12,21 +12,11 @@ Two reusable workflows, one provider cascade:
 
 The cascade (in `scripts/gateway.py`) tries free providers in order and fails over automatically on rate limits or outages. Providers without a configured key are skipped, so any subset of keys works.
 
-**`code_review` cascade** (used by PR reviews and thread replies):
+**The cascades live in [`models.json`](models.json) — read it there, not here.** It defines `code_review`, `general`, `creative`, `deepseek_cheap` and `frontier`, in order, with each entry's structured-output mode and vision capability. Its `_comment` field carries the field log: which models died, when, and why they were replaced.
 
-| Order | Provider | Model | Free limits (July 2026) |
-|---|---|---|---|
-| 1 | OpenRouter | `cohere/north-mini-code:free` | ~20 req/min, ~200 req/day (shared pool) |
-| 2 | OpenRouter | `poolside/laguna-m.1:free` | same shared pool |
-| 3 | Google AI Studio | `gemini-2.0-flash` | 15 RPM, 1,500 req/day (check your project's live quotas in AI Studio) |
-| 4 | Groq | `llama-3.3-70b-versatile` | 30 RPM, ~1K req/day |
-| 5 | OpenRouter | `openrouter/free` (auto-router) | shared pool — non-deterministic, safety net only |
+This README deliberately does not list the models. A hand-copied table went stale within weeks and confidently documented four models that were all returning 404/403 — the exact failure the gateway exists to route around. `models.json` is the only place a model ID is written, `model-watch.yml` opens a PR against it weekly, and free-tier quotas move too fast to mirror: check each provider's own console (OpenRouter, Google AI Studio, Groq) for live limits.
 
-**`general` cascade** (used by `llm-task.yml`): Gemini 2.0 Flash first (stable, high context), then Groq, then `openrouter/free` as the safety net.
-
-> **Model IDs are verified, not assumed.** All IDs above were checked against live provider catalogs on July 22, 2026. `cohere/north-mini-code:free` and `poolside/laguna-m.1:free` are confirmed present in the OpenRouter catalog; `gemini-2.0-flash` is the current valid Flash model on Google's OpenAI-compatible endpoint (no `google/` prefix). The model-watch workflow keeps this current automatically (see below).
-
-**Vercel AI Gateway** is the paid **frontier tier**, behind `AI_GATEWAY_API_KEY`: one key, hundreds of models, no token markup, billed on your Vercel account. It's reserved for the `frontier` cascade — `anthropic/claude-opus-5` → `openai/gpt-5.6-sol` → `google/gemini-3.1-pro-preview` (the 2026 frontier, per Artificial Analysis Intelligence Index). Direct `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` follow as independent fallback tiers: same token price, separate billing path, so a Vercel outage or credit exhaustion fails over to your own keys. The free cascades (`code_review`, `general`, `creative`) stay Vercel-free, so passing the key is the opt-in: a repo that never sets it never spends. Swap a frontier model by editing the `frontier` list in `models.json`; nothing else changes.
+**Vercel AI Gateway** is the paid **frontier tier**, behind `AI_GATEWAY_API_KEY`: one key, hundreds of models, no token markup, billed on your Vercel account. It's reserved for the `frontier` cascade (see the `frontier` list in `models.json` for the current chain, ranked by the Artificial Analysis Intelligence Index). Direct `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` follow as independent fallback tiers: same token price, separate billing path, so a Vercel outage or credit exhaustion fails over to your own keys. The free cascades (`code_review`, `general`, `creative`) stay Vercel-free, so passing the key is the opt-in: a repo that never sets it never spends. Swap a frontier model by editing the `frontier` list in `models.json`; nothing else changes.
 
 **Multiple accounts.** Any provider's key env var accepts several comma- or whitespace-separated keys — e.g. `AI_GATEWAY_API_KEY="acct1,acct2"` — and the gateway fails over through them in order. This is how you spread load across several Vercel accounts, each drawing on its own monthly credit pool: when one account's rate limit or credits are exhausted the next key is tried before moving to the next model/provider.
 
@@ -84,7 +74,7 @@ No per-repo step. `update-callers.sh` is only for a major bump (`@v1` → `@v2`)
 
 ## Testing
 
-The project has a test suite (231 tests) covering the diff parser, comment validator, impact analysis, context/docs resolution, lint/secrets scan, gateway cascade loading, model-watch ranking, learnings memory, workflow YAML validation, gateway error handling/failover, and reply/schema validation. Tests are pure-logic (no network calls) and use pytest.
+The project has a test suite covering the diff parser, comment validator, impact analysis, context/docs resolution, lint/secrets scan, gateway cascade loading, model-watch ranking, learnings memory, workflow YAML validation, gateway error handling/failover, and reply/schema validation. Tests are pure-logic (no network calls) and use pytest.
 
 ```bash
 python3 -m pytest tests/ -v
@@ -135,7 +125,7 @@ text = complete("...", cascade="deepseek_cheap")                   # paid, needs
 text = complete("...", cascade="frontier")                        # frontier tier: Vercel, then direct Anthropic/OpenAI keys
 ```
 
-Because the app only ever references a cascade name, swapping the underlying model, adding a new provider, or retiring a dead free-tier model is a one-line edit to `models.json` in this repo — every app picks it up on its next call, with zero app-code changes. This is also how you add a paid provider like DeepSeek without going through OpenRouter's markup: `providers.deepseek` points straight at `api.deepseek.com`, billed on your own DeepSeek account, and the `deepseek_cheap` cascade pins `deepseek-v4-flash`.
+Because the app only ever references a cascade name, swapping the underlying model, adding a new provider, or retiring a dead free-tier model is a one-line edit to `models.json` in this repo — every app picks it up on its next call, with zero app-code changes. This is also how you add a paid provider like DeepSeek without going through OpenRouter's markup: `providers.deepseek` points straight at `api.deepseek.com`, billed on your own DeepSeek account, and the `deepseek_cheap` cascade routes there.
 
 **Paid providers and accidental spend.** `general` stays free-tier only. `code_review` now ends in a paid DeepSeek step, reached only after every free tier has failed. That is still opt-in, because the opt-in mechanism is the KEY, not the cascade: `gateway.py` skips any provider whose `key_env` is unset, so a repo that does not pass `DEEPSEEK_API_KEY` never reaches that step and never spends a cent. A repo that does pass it has said yes on purpose.
 
@@ -183,13 +173,14 @@ See `docs/architecture.md` for the full spec and rollout plan.
 
 ## Design notes (why it's built this way)
 
-- **No line-number math by the model.** `review.py` pre-parses the diff and annotates every line as `path::line::[ADDED]::`; the model copies numbers, and every comment is validated against the real diff before posting. Invalid targets are dropped, and if GitHub still rejects the inline review, it falls back to a single summary comment.
+- **No line-number math by the model.** `review.py` pre-parses the diff and annotates every line as `path::line::[ADDED]::`; the model copies numbers, and every comment is validated against the real diff before posting. A comment that doesn't land on an added line is dropped **and named in the summary** — the summary is written before validation, so silent drops once produced a review claiming "both bugs are fixed in the suggestions" with no suggestions attached. If GitHub rejects the inline review anyway (or the request times out), it falls back to a single summary comment.
+- **Docs point at code, never copy it.** Model IDs, cascade order and version pins are each written in exactly one place — `models.json` and `${{ job.workflow_sha }}` — because every copy of a fast-moving fact is a copy that goes stale silently. Where a claim must appear twice, a test in `tests/test_workflows.py` fails when the copies disagree.
 - **Strict structured outputs** via `response_format: {type: "json_schema", strict: true}` where supported (OpenRouter, Gemini); JSON-object mode with the schema embedded in the prompt on Groq.
 - **Security:** actions pinned to commit SHAs, least-privilege `permissions`, `persist-credentials: false`, no untrusted PR text interpolated into `run:` blocks, `concurrency` cancels superseded runs.
 - **Why not ZeroLimitAI / scraped free-model routers:** fine for personal scripts, but in CI you need determinism, a privacy policy that covers your code, and an endpoint that won't vanish mid-build. Direct free tiers from OpenRouter / Google / Groq provide that; the cascade covers their individual flakiness.
 
 ## Limits to keep in mind
 
-- OpenRouter's ~200 free requests/day is shared across all your repos' PRs. Busy fleet → traffic spills to Gemini/Groq automatically, but a very busy day can exhaust everything. That's the price of $0. For a fleet of 90+ repos, consider running your own local model (Ollama) as an additional cascade tier — see `PROVIDERS` in `scripts/gateway.py`.
-- `gemini-2.0-flash` free-tier prompts may be used by Google for training — fine for open source, think twice for proprietary code (OpenRouter free models have similar caveats; read each provider's data policy).
+- OpenRouter's ~200 free requests/day is shared across all your repos' PRs. Busy fleet → traffic spills to Gemini/Groq automatically, but a very busy day can exhaust everything. That's the price of $0. If your fleet outgrows the free pools, add a local model (Ollama) as another cascade tier — a `providers` entry in `models.json`, no code change.
+- **Free tiers often train on your prompts.** Google's free AI Studio tier and OpenRouter's `:free` models both reserve this right, and a PR diff is your source code. Fine for open source; think twice for proprietary repos, and read each provider's current data policy — the terms change as often as the model IDs.
 - The review job soft-fails into a summary comment, but if all providers are down the check fails. Don't make it a *required* check unless you accept occasional re-runs.

@@ -111,11 +111,31 @@ meteo-brief's remaining blockers are per-phase model routing and Langfuse
 - **Phase 1** — enforce the cascade-first contract in every consumer; migrate
   the three drifters (meteo-brief, longevity-dashboard, career-ops) off their
   own provider tables; fix the provider-hardcoding consumers (e.g.
-  social-publisher's `select(.provider=="openrouter")`).
-- **Phase 2** — deploy the hosted endpoint; cut repos over to one
-  `GATEWAY_TOKEN`; move provider keys out of repos into the Vercel project.
+  social-publisher's `select(.provider=="openrouter")`). *Status unverified —
+  audit the consumers before trusting this as done.*
+- **Phase 2** — **done (2026-08).** The hosted endpoint ships as
+  `api/chat/completions.py`; see the contract above. Cutting repos over to a
+  single `GATEWAY_TOKEN` is still open — CI callers pass provider keys directly.
 - **Phase 3** — write the ADR + add a CI check that fails any repo hardcoding a
-  provider/model/key, so the drift cannot return.
+  provider/model/key, so the drift cannot return. Still open. The version-pin
+  guards in `tests/test_workflows.py::TestGatewayRefPinning` are the same idea
+  applied to refs rather than models, and are the template to copy.
+
+## Versioning
+
+One pin, and it is derived rather than written:
+
+| Pin | Value | Why |
+|---|---|---|
+| Caller → reusable workflow | `@v1` (floating major) | A release reaches the fleet with no per-repo edit |
+| Workflow → its own scripts | `${{ job.workflow_sha }}` | The exact commit already running, so it cannot drift |
+
+Each reusable workflow fetches its own `scripts/`, so a literal `ref:` was a
+second pin per caller — and it drifted: callers asked for `@v1.3.1`, whose
+workflow checked out `ref: v1.2.0`, whose workflow checked out `ref: v1.0.0`.
+Twelve repos ran the first release for months. Every pin was individually valid,
+so nothing failed. Release: `git tag vX.Y.Z && git tag -f v1 && git push -f
+origin v1`. Rollback: `git tag -f v1 <last-good-sha>`.
 
 ## Pros / cons (summary)
 
