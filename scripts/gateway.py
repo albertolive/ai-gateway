@@ -12,9 +12,11 @@ Verified July 2026:
 """
 
 import json
+import math
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -183,8 +185,9 @@ class CircuitOpenError(RuntimeError):
 # Per-intent circuit breaker: after K consecutive outage-class cascade failures,
 # skip the failover walk and raise CircuitOpenError for COOLDOWN_S so a dead
 # provider set doesn't burn the full budget on every call. Half-open: once the
-# cooldown expires, one probe request is allowed through and re-opens right away
-# if it fails, or resets failures to 0 if it succeeds.
+# cooldown expires, one probe request is allowed through while concurrent
+# callers continue fast-failing until the probe succeeds or re-opens the breaker.
+_circuit_lock = threading.Lock()
 _circuit_states = {}
 
 
@@ -205,44 +208,62 @@ def _cb_cooldown_s():
     except ValueError:
         print(f"  ! ignoring invalid AI_GATEWAY_CB_COOLDOWN_S={raw!r}, using 30s")
         val = 30.0
+    if not math.isfinite(val):
+        print(f"  ! ignoring non-finite AI_GATEWAY_CB_COOLDOWN_S={raw!r}, using 30s")
+        val = 30.0
     return max(1.0, val)
 
 
 def _circuit_for(intent):
     state = _circuit_states.get(intent)
     if state is None:
-        state = {"failures": 0, "opened_at": 0.0}
+        state = {"failures": 0, "opened_at": 0.0, "probing": False}
         _circuit_states[intent] = state
     return state
 
 
-def _circuit_open(intent):
-    state = _circuit_for(intent)
-    opened_at = state["opened_at"]
-    if not opened_at:
-        return False
-    if time.monotonic() - opened_at < _cb_cooldown_s():
-        return True
-    # Half-open: allow one probe through; if it fails, it trips immediately.
-    state["opened_at"] = 0.0
-    state["failures"] = max(0, _cb_threshold() - 1)
-    return False
+def _circuit_acquire(intent):
+    """Return True if this call is allowed to run (and whether it is a half-open probe)."""
+    with _circuit_lock:
+        state = _circuit_for(intent)
+        opened_at = state["opened_at"]
+        if not opened_at:
+            return True, False
+        if state["probing"] or time.monotonic() - opened_at < _cb_cooldown_s():
+            return False, False
+        # Half-open: admit exactly one probe; concurrent callers fast-fail until it finishes.
+        state["probing"] = True
+        state["failures"] = max(0, _cb_threshold() - 1)
+        return True, True
 
 
 def _circuit_succeed(intent):
-    state = _circuit_for(intent)
-    state["failures"] = 0
-    state["opened_at"] = 0.0
+    with _circuit_lock:
+        state = _circuit_for(intent)
+        state["failures"] = 0
+        state["opened_at"] = 0.0
+        state["probing"] = False
 
 
-def _circuit_fail(intent):
-    state = _circuit_for(intent)
-    threshold = _cb_threshold()
-    state["failures"] += 1
-    if state["failures"] >= threshold:
-        state["opened_at"] = time.monotonic()
-        print(f"  ! circuit breaker OPEN for '{intent}' after "
-              f"{state['failures']} failures, cooldown {_cb_cooldown_s()}s")
+def _circuit_fail(intent, was_probe=False):
+    with _circuit_lock:
+        state = _circuit_for(intent)
+        state["probing"] = False
+        threshold = _cb_threshold()
+        state["failures"] += 1
+        if was_probe or state["failures"] >= threshold:
+            state["opened_at"] = time.monotonic()
+            print(f"  ! circuit breaker OPEN for '{intent}' after "
+                  f"{state['failures']} failures, cooldown {_cb_cooldown_s()}s")
+
+
+def _circuit_release_probe(intent):
+    """Release half-open probe flag if a probe exited without a provider outage."""
+    with _circuit_lock:
+        state = _circuit_for(intent)
+        if state["probing"]:
+            state["probing"] = False
+            state["opened_at"] = 0.0
 
 
 def complete(prompt, system=None, intent="general", schema=None,
@@ -276,7 +297,8 @@ def complete(prompt, system=None, intent="general", schema=None,
     cascade = CASCADES[resolved_intent]
     errors = []
     had_outage_failure = False
-    if _circuit_open(resolved_intent):
+    allowed, is_probe = _circuit_acquire(resolved_intent)
+    if not allowed:
         print(f"  ! circuit breaker OPEN for '{resolved_intent}' — failing fast, skipping cascade")
         raise CircuitOpenError(
             f"AI gateway circuit breaker OPEN for '{resolved_intent}' — providers temporarily unavailable"
@@ -398,14 +420,17 @@ def complete(prompt, system=None, intent="general", schema=None,
                     msg = f"{provider['name']}: {type(e).__name__}: {e}"
                     print(f"  ! {msg}")
                     errors.append(msg)
-                    # Budget-induced timeouts from a tight caller budget_s aren't
-                    # provider outages; other transport/parse failures are.
-                    if left() > 0:
+                    # Only count transport/timeout failures as provider outages;
+                    # bad model JSON/empty content or tight caller budget_s shouldn't
+                    # trip the breaker for other callers.
+                    if left() > 0 and isinstance(e, (urllib.error.URLError, TimeoutError, OSError)):
                         had_outage_failure = True
                     break
 
     if had_outage_failure:
-        _circuit_fail(resolved_intent)
+        _circuit_fail(resolved_intent, was_probe=is_probe)
+    elif is_probe:
+        _circuit_release_probe(resolved_intent)
     raise RuntimeError(
         "All providers in the cascade failed or were skipped:\n"
         + "\n".join(f"  - {e}" for e in errors)

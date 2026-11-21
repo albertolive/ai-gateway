@@ -228,6 +228,7 @@ def test_malformed_content_part_is_400(gw):
 
 
 def test_request_budget_s_override_is_downward_only(gw, monkeypatch):
+    monkeypatch.delenv("AI_GATEWAY_BUDGET_S", raising=False)
     seen = {}
 
     def fake_complete(prompt, system=None, intent="general", **kw):

@@ -389,11 +389,35 @@ class TestCircuitBreaker:
         assert text == "ok"
         assert used.startswith("gemini/")
 
+    def test_tripped_cascade_never_blocks_other_cascades(self, monkeypatch):
+        """An open breaker on deepseek_cheap must not block vision."""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-ds")
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+        monkeypatch.setenv("AI_GATEWAY_CB_FAILURES", "2")
+
+        def mock_post(base_url, *a, **kw):
+            if "deepseek" in base_url:
+                raise urllib.error.HTTPError(base_url, 500, "Down", {}, None)
+            return "ok"
+
+        monkeypatch.setattr(gateway, "_post_chat", mock_post)
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                gateway.complete("p", intent="deepseek_cheap")
+        with pytest.raises(gateway.CircuitOpenError):
+            gateway.complete("p", intent="deepseek_cheap")
+
+        text, used = gateway.complete("p", intent="vision")
+        assert text == "ok"
+        assert used.startswith("gemini/")
+
     def test_malformed_cb_env_falls_back_cleanly(self, monkeypatch):
         monkeypatch.setenv("AI_GATEWAY_CB_COOLDOWN_S", "30s")
         monkeypatch.setenv("AI_GATEWAY_CB_FAILURES", "three")
         assert gateway._cb_cooldown_s() == 30.0
         assert gateway._cb_threshold() == 3
+        monkeypatch.setenv("AI_GATEWAY_CB_COOLDOWN_S", "inf")
+        assert gateway._cb_cooldown_s() == 30.0
 
     def test_half_open_probe_reopens_immediately_on_failure(self, monkeypatch):
         """After cooldown, one failing probe re-opens the breaker immediately."""
