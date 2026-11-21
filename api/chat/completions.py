@@ -35,6 +35,7 @@ elapsed_ms) so fleet-wide usage is measurable; aggregate with `scripts/usage.py`
 """
 
 import json
+import math
 import os
 import sys
 import time
@@ -63,6 +64,21 @@ def _budget():
     except ValueError:
         value = _SERVER_BUDGET_CAP
     return min(value, _SERVER_BUDGET_CAP)
+
+
+def _request_budget(body):
+    """Per-request cascade budget (downward-only override, clamped to [5s, server cap])."""
+    cap = _budget()
+    raw = body.get("budget_s")
+    if raw is None or isinstance(raw, bool):
+        return cap
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return cap
+    if not math.isfinite(value) or value <= 0:
+        return cap
+    return min(cap, max(5.0, value))
 
 
 def _elapsed_ms(started):
@@ -230,7 +246,7 @@ class handler(BaseHTTPRequestHandler):
                 system=system,
                 intent=cascade,
                 temperature=float(body.get("temperature", 0.1)),
-                budget_s=_budget(),
+                budget_s=_request_budget(body),
                 messages=messages,
                 schema=schema,
                 schema_name=schema_name,
@@ -238,7 +254,10 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             # The cascade raises RuntimeError with the per-provider errors when
             # everything is skipped or down; surface it as an upstream failure.
-            _log_usage(cascade, None, "error", _elapsed_ms(started))
+            # CircuitOpenError (a RuntimeError subclass) marks fast-fail open
+            # breaker calls without fragile substring matching on error text.
+            status_label = "cb_open" if isinstance(e, gateway.CircuitOpenError) else "error"
+            _log_usage(cascade, None, status_label, _elapsed_ms(started))
             _send(self, 502, {"error": {"message": f"all providers failed: {e}"}})
             return
         _log_usage(cascade, used, "ok", _elapsed_ms(started))

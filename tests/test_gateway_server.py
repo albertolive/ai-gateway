@@ -225,3 +225,61 @@ def test_malformed_content_part_is_400(gw):
         _post(gw, {"model": "general", "messages": [{"role": "user",
                                                         "content": [{"url": "x"}]}]})
     assert exc.value.code == 400
+
+
+def test_request_budget_s_override_is_downward_only(gw, monkeypatch):
+    monkeypatch.delenv("AI_GATEWAY_BUDGET_S", raising=False)
+    seen = {}
+
+    def fake_complete(prompt, system=None, intent="general", **kw):
+        seen["budget_s"] = kw.get("budget_s")
+        return "ok", "gemini/gemini-3.5-flash-lite"
+
+    monkeypatch.setattr(gateway, "complete", fake_complete)
+    _post(gw, {"model": "vision", "budget_s": 45,
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] == 45.0
+
+    # Cannot exceed server cap (280s)
+    _post(gw, {"model": "vision", "budget_s": 9999,
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] <= 280.0
+
+    # Clamped upward to minimum 5s
+    _post(gw, {"model": "vision", "budget_s": 1,
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] == 5.0
+
+    # Non-finite or bool budget_s falls back to server cap
+    _post(gw, {"model": "vision", "budget_s": "nan",
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] == 280.0
+    _post(gw, {"model": "vision", "budget_s": True,
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] == 280.0
+
+    # Server cap takes precedence even when below the 5s floor
+    monkeypatch.setenv("AI_GATEWAY_BUDGET_S", "2")
+    _post(gw, {"model": "vision", "budget_s": 1,
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] == 2.0
+
+
+def test_usage_logs_cb_open_only_for_circuit_open_error(gw, monkeypatch, capsys):
+    def provider_err(*a, **kw):
+        raise RuntimeError("upstream mentioned circuit breaker in body")
+
+    monkeypatch.setattr(gateway, "complete", provider_err)
+    with pytest.raises(urllib.error.HTTPError):
+        _post(gw, {"model": "vision", "messages": [{"role": "user", "content": "hi"}]})
+
+    def cb_err(*a, **kw):
+        raise gateway.CircuitOpenError("open")
+
+    monkeypatch.setattr(gateway, "complete", cb_err)
+    with pytest.raises(urllib.error.HTTPError):
+        _post(gw, {"model": "vision", "messages": [{"role": "user", "content": "hi"}]})
+
+    out = capsys.readouterr().err
+    events = [json.loads(l) for l in out.splitlines() if '"event": "usage"' in l]
+    assert [e["status"] for e in events] == ["error", "cb_open"]

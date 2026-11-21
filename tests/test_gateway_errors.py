@@ -78,6 +78,8 @@ class TestJsonFenceStripping:
         monkeypatch.setattr(gateway, "_post_chat",
                             lambda *a, **kw: plain)
         monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        gateway._circuit_for("code_review")["failures"] = 2
+        gateway._circuit_for("code_review")["opened_at"] = 0.0
 
         schema = {"type": "object", "properties": {
             "summary": {"type": "string"},
@@ -85,6 +87,7 @@ class TestJsonFenceStripping:
         result, _ = gateway.complete("test", intent="code_review",
                                       schema=schema)
         assert result["summary"] == "clean"
+        assert gateway._circuit_for("code_review")["failures"] == 0
 
     def test_invalid_json_raises(self, monkeypatch):
         """Non-JSON response with schema should raise (caught as generic error)."""
@@ -367,3 +370,84 @@ class TestMultiKeyFailover:
         # code_review has one openrouter entry; two keys = two calls, then
         # the cascade gives up (all other providers skipped: no key).
         assert calls == ["key1", "key2"]
+
+
+class TestCircuitBreaker:
+    def test_unconfigured_cascade_never_trips_other_cascades(self, monkeypatch):
+        """Missing keys on deepseek_cheap must not trip vision or general."""
+        for k in ("DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY"):
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini-key")
+        monkeypatch.setattr(gateway, "_post_chat", lambda *a, **kw: "ok")
+
+        for _ in range(4):
+            with pytest.raises(RuntimeError):
+                gateway.complete("p", intent="deepseek_cheap")
+
+        # Vision cascade must still work untouched
+        text, used = gateway.complete("p", intent="vision")
+        assert text == "ok"
+        assert used.startswith("gemini/")
+
+    def test_tripped_cascade_never_blocks_other_cascades(self, monkeypatch):
+        """An open breaker on deepseek_cheap must not block vision."""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-ds")
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+        monkeypatch.setenv("AI_GATEWAY_CB_FAILURES", "2")
+
+        def mock_post(base_url, *a, **kw):
+            if "deepseek" in base_url:
+                raise urllib.error.HTTPError(base_url, 500, "Down", {}, None)
+            return "ok"
+
+        monkeypatch.setattr(gateway, "_post_chat", mock_post)
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                gateway.complete("p", intent="deepseek_cheap")
+        with pytest.raises(gateway.CircuitOpenError):
+            gateway.complete("p", intent="deepseek_cheap")
+
+        text, used = gateway.complete("p", intent="vision")
+        assert text == "ok"
+        assert used.startswith("gemini/")
+
+    def test_malformed_cb_env_falls_back_cleanly(self, monkeypatch):
+        monkeypatch.setenv("AI_GATEWAY_CB_COOLDOWN_S", "30s")
+        monkeypatch.setenv("AI_GATEWAY_CB_FAILURES", "three")
+        assert gateway._cb_cooldown_s() == 30.0
+        assert gateway._cb_threshold() == 3
+        monkeypatch.setenv("AI_GATEWAY_CB_COOLDOWN_S", "inf")
+        assert gateway._cb_cooldown_s() == 30.0
+
+    def test_half_open_probe_reopens_immediately_on_failure(self, monkeypatch):
+        """After cooldown, one failing probe re-opens the breaker immediately."""
+        for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "AI_GATEWAY_API_KEY",
+                  "DEEPSEEK_API_KEY"):
+            monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "k1")
+        monkeypatch.setenv("AI_GATEWAY_CB_COOLDOWN_S", "10")
+        monkeypatch.setenv("AI_GATEWAY_CB_FAILURES", "2")
+
+        now = [100.0]
+        monkeypatch.setattr(gateway.time, "monotonic", lambda: now[0])
+
+        def fail_500(base_url, *a, **kw):
+            raise urllib.error.HTTPError(base_url, 500, "Down", {}, None)
+
+        monkeypatch.setattr(gateway, "_post_chat", fail_500)
+
+        # Two outage failures open the breaker
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                gateway.complete("p", intent="general")
+        with pytest.raises(gateway.CircuitOpenError):
+            gateway.complete("p", intent="general")
+
+        # Advance past cooldown -> half-open allows ONE probe, which fails and
+        # immediately re-opens the breaker for another cooldown window.
+        now[0] = 115.0
+        with pytest.raises(RuntimeError) as exc:
+            gateway.complete("p", intent="general")
+        assert not isinstance(exc.value, gateway.CircuitOpenError)
+        with pytest.raises(gateway.CircuitOpenError):
+            gateway.complete("p", intent="general")
