@@ -225,3 +225,26 @@ def test_malformed_content_part_is_400(gw):
         _post(gw, {"model": "general", "messages": [{"role": "user",
                                                         "content": [{"url": "x"}]}]})
     assert exc.value.code == 400
+
+
+def test_request_budget_s_override_is_downward_only(gw, monkeypatch):
+    seen = {}
+
+    def fake_complete(prompt, system=None, intent="general", **kw):
+        seen["budget_s"] = kw.get("budget_s")
+        return "ok", "gemini/gemini-3.5-flash-lite"
+
+    monkeypatch.setattr(gateway, "complete", fake_complete)
+    _post(gw, {"model": "vision", "budget_s": 45,
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] == 45.0
+
+    # Cannot exceed server cap (280s)
+    _post(gw, {"model": "vision", "budget_s": 9999,
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] <= 280.0
+
+    # Clamped upward to minimum 5s
+    _post(gw, {"model": "vision", "budget_s": 1,
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] == 5.0

@@ -89,6 +89,23 @@
         "structured": "json_object"
       }
     ],
+    "vision": [
+      {
+        "provider": "gemini",
+        "model": "gemini-3.5-flash-lite",
+        "structured": "json_schema"
+      },
+      {
+        "provider": "gemini",
+        "model": "gemini-3.6-flash",
+        "structured": "json_schema"
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemma-4-26b-a4b-it:free",
+        "structured": "json_schema"
+      }
+    ],
     "deepseek_cheap": [
       {
         "provider": "deepseek",

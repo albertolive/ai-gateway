@@ -176,6 +176,33 @@ def _messages_with_schema_instruction(messages, schema, json_object_mode):
     return out
 
 
+# Circuit breaker: after K consecutive cascade failures, skip the expensive
+# failover walk and raise immediately for COOLDOWN_S, so a dead provider set
+# doesn't burn the full 280s budget on every call. Trip threshold is tunable
+# via env so it can be tuned against fresh timings without code changes.
+_CIRCUIT_FAILURES_TO_TRIP = 3
+_CIRCUIT_COOLDOWN_S = float(os.environ.get("AI_GATEWAY_CB_COOLDOWN_S", "30"))
+_circuit_state = {"failures": 0, "opened_at": 0.0}
+
+
+def _circuit_open():
+    opened_at = _circuit_state["opened_at"]
+    if opened_at and time.monotonic() - opened_at < _CIRCUIT_COOLDOWN_S:
+        return True
+    if opened_at:
+        _circuit_state["failures"] = 0
+        _circuit_state["opened_at"] = 0.0
+    return False
+
+
+def _circuit_fail():
+    _circuit_state["failures"] += 1
+    if _circuit_state["failures"] >= _CIRCUIT_FAILURES_TO_TRIP:
+        _circuit_state["opened_at"] = time.monotonic()
+        print(f"  ! circuit breaker OPEN after {_CIRCUIT_FAILURES_TO_TRIP} failures, "
+              f"cooldown {_CIRCUIT_COOLDOWN_S}s")
+
+
 def complete(prompt, system=None, intent="general", schema=None,
              schema_name="response", temperature=0.1, max_retries_per_provider=1,
              budget_s=None, messages=None):
@@ -205,6 +232,9 @@ def complete(prompt, system=None, intent="general", schema=None,
     """
     cascade = CASCADES.get(intent, CASCADES["general"])
     errors = []
+    if _circuit_open():
+        print("  ! circuit breaker OPEN — failing fast, skipping cascade")
+        raise RuntimeError("AI gateway circuit breaker OPEN — providers temporarily unavailable")
     if budget_s is None:
         # A malformed override must not raise out of here: complete()'s callers catch RuntimeError
         # (review.py turns it into an outage comment), so a ValueError would escape as an unhandled
@@ -293,7 +323,10 @@ def complete(prompt, system=None, intent="general", schema=None,
                         cleaned = text.strip()
                         if cleaned.startswith("```"):
                             cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0]
-                        return json.loads(cleaned), provider["name"]
+                        parsed = json.loads(cleaned)
+                        _circuit_state["failures"] = 0  # reset on structured success too
+                        return parsed, provider["name"]
+                    _circuit_state["failures"] = 0  # reset on success
                     return text, provider["name"]
                 except urllib.error.HTTPError as e:
                     detail = ""
@@ -317,6 +350,7 @@ def complete(prompt, system=None, intent="general", schema=None,
                     errors.append(msg)
                     break
 
+    _circuit_fail()
     raise RuntimeError(
         "All providers in the cascade failed or were skipped:\n"
         + "\n".join(f"  - {e}" for e in errors)

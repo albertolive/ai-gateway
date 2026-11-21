@@ -94,6 +94,17 @@ class TestLoadCascades:
         assert entry["name"] == "deepseek/deepseek-v4-flash"
         assert entry["key_env"] == "DEEPSEEK_API_KEY"
 
+    def test_vision_cascade_is_vision_only_and_protects_flash_pool(self):
+        cascades = gateway.load_cascades()
+        assert "vision" in cascades
+        vis = cascades["vision"]
+        models = [e["model"] for e in vis]
+        assert models[0] == "gemini-3.5-flash-lite"
+        assert "gemini-3.6-flash" in models
+        assert "openrouter/free" not in models
+        assert all(e.get("vision", True) is True for e in vis)
+        assert all(e["structured"] == "json_schema" for e in vis)
+
     def test_custom_config(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json",
                                          delete=False) as f:

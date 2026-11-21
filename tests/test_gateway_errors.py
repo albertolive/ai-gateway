@@ -78,6 +78,8 @@ class TestJsonFenceStripping:
         monkeypatch.setattr(gateway, "_post_chat",
                             lambda *a, **kw: plain)
         monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        gateway._circuit_state["failures"] = 2
+        gateway._circuit_state["opened_at"] = 0.0
 
         schema = {"type": "object", "properties": {
             "summary": {"type": "string"},
@@ -85,6 +87,7 @@ class TestJsonFenceStripping:
         result, _ = gateway.complete("test", intent="code_review",
                                       schema=schema)
         assert result["summary"] == "clean"
+        assert gateway._circuit_state["failures"] == 0
 
     def test_invalid_json_raises(self, monkeypatch):
         """Non-JSON response with schema should raise (caught as generic error)."""
