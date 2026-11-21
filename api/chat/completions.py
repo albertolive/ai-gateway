@@ -253,9 +253,10 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             # The cascade raises RuntimeError with the per-provider errors when
             # everything is skipped or down; surface it as an upstream failure.
-            # The circuit breaker (gateway.py) raises the same type when open —
-            # callers get a 502 quickly instead of burning the full budget.
-            _log_usage(cascade, None, "cb_open" if "circuit breaker" in str(e) else "error", _elapsed_ms(started))
+            # CircuitOpenError (a RuntimeError subclass) marks fast-fail open
+            # breaker calls without fragile substring matching on error text.
+            status_label = "cb_open" if isinstance(e, gateway.CircuitOpenError) else "error"
+            _log_usage(cascade, None, status_label, _elapsed_ms(started))
             _send(self, 502, {"error": {"message": f"all providers failed: {e}"}})
             return
         _log_usage(cascade, used, "ok", _elapsed_ms(started))

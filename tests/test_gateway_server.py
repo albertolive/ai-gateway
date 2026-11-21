@@ -248,3 +248,23 @@ def test_request_budget_s_override_is_downward_only(gw, monkeypatch):
     _post(gw, {"model": "vision", "budget_s": 1,
                "messages": [{"role": "user", "content": "read poster"}]})
     assert seen["budget_s"] == 5.0
+
+
+def test_usage_logs_cb_open_only_for_circuit_open_error(gw, monkeypatch, capsys):
+    def provider_err(*a, **kw):
+        raise RuntimeError("upstream mentioned circuit breaker in body")
+
+    monkeypatch.setattr(gateway, "complete", provider_err)
+    with pytest.raises(urllib.error.HTTPError):
+        _post(gw, {"model": "vision", "messages": [{"role": "user", "content": "hi"}]})
+
+    def cb_err(*a, **kw):
+        raise gateway.CircuitOpenError("open")
+
+    monkeypatch.setattr(gateway, "complete", cb_err)
+    with pytest.raises(urllib.error.HTTPError):
+        _post(gw, {"model": "vision", "messages": [{"role": "user", "content": "hi"}]})
+
+    out = capsys.readouterr().err
+    events = [json.loads(l) for l in out.splitlines() if '"event": "usage"' in l]
+    assert [e["status"] for e in events] == ["error", "cb_open"]

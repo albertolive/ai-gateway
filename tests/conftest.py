@@ -17,8 +17,6 @@ import gateway  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _reset_circuit_breaker():
-    gateway._circuit_state["failures"] = 0
-    gateway._circuit_state["opened_at"] = 0.0
+    gateway._circuit_states.clear()
     yield
-    gateway._circuit_state["failures"] = 0
-    gateway._circuit_state["opened_at"] = 0.0
+    gateway._circuit_states.clear()

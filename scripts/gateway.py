@@ -176,31 +176,73 @@ def _messages_with_schema_instruction(messages, schema, json_object_mode):
     return out
 
 
-# Circuit breaker: after K consecutive cascade failures, skip the expensive
-# failover walk and raise immediately for COOLDOWN_S, so a dead provider set
-# doesn't burn the full 280s budget on every call. Trip threshold is tunable
-# via env so it can be tuned against fresh timings without code changes.
-_CIRCUIT_FAILURES_TO_TRIP = 3
-_CIRCUIT_COOLDOWN_S = float(os.environ.get("AI_GATEWAY_CB_COOLDOWN_S", "30"))
-_circuit_state = {"failures": 0, "opened_at": 0.0}
+class CircuitOpenError(RuntimeError):
+    """Raised when a cascade's circuit breaker is open (fast-fail)."""
 
 
-def _circuit_open():
-    opened_at = _circuit_state["opened_at"]
-    if opened_at and time.monotonic() - opened_at < _CIRCUIT_COOLDOWN_S:
+# Per-intent circuit breaker: after K consecutive outage-class cascade failures,
+# skip the failover walk and raise CircuitOpenError for COOLDOWN_S so a dead
+# provider set doesn't burn the full budget on every call. Half-open: once the
+# cooldown expires, one probe request is allowed through and re-opens right away
+# if it fails, or resets failures to 0 if it succeeds.
+_circuit_states = {}
+
+
+def _cb_threshold():
+    raw = os.environ.get("AI_GATEWAY_CB_FAILURES", "")
+    try:
+        val = int(raw) if raw.strip() else 3
+    except ValueError:
+        print(f"  ! ignoring invalid AI_GATEWAY_CB_FAILURES={raw!r}, using 3")
+        val = 3
+    return max(1, val)
+
+
+def _cb_cooldown_s():
+    raw = os.environ.get("AI_GATEWAY_CB_COOLDOWN_S", "")
+    try:
+        val = float(raw) if raw.strip() else 30.0
+    except ValueError:
+        print(f"  ! ignoring invalid AI_GATEWAY_CB_COOLDOWN_S={raw!r}, using 30s")
+        val = 30.0
+    return max(1.0, val)
+
+
+def _circuit_for(intent):
+    state = _circuit_states.get(intent)
+    if state is None:
+        state = {"failures": 0, "opened_at": 0.0}
+        _circuit_states[intent] = state
+    return state
+
+
+def _circuit_open(intent):
+    state = _circuit_for(intent)
+    opened_at = state["opened_at"]
+    if not opened_at:
+        return False
+    if time.monotonic() - opened_at < _cb_cooldown_s():
         return True
-    if opened_at:
-        _circuit_state["failures"] = 0
-        _circuit_state["opened_at"] = 0.0
+    # Half-open: allow one probe through; if it fails, it trips immediately.
+    state["opened_at"] = 0.0
+    state["failures"] = max(0, _cb_threshold() - 1)
     return False
 
 
-def _circuit_fail():
-    _circuit_state["failures"] += 1
-    if _circuit_state["failures"] >= _CIRCUIT_FAILURES_TO_TRIP:
-        _circuit_state["opened_at"] = time.monotonic()
-        print(f"  ! circuit breaker OPEN after {_CIRCUIT_FAILURES_TO_TRIP} failures, "
-              f"cooldown {_CIRCUIT_COOLDOWN_S}s")
+def _circuit_succeed(intent):
+    state = _circuit_for(intent)
+    state["failures"] = 0
+    state["opened_at"] = 0.0
+
+
+def _circuit_fail(intent):
+    state = _circuit_for(intent)
+    threshold = _cb_threshold()
+    state["failures"] += 1
+    if state["failures"] >= threshold:
+        state["opened_at"] = time.monotonic()
+        print(f"  ! circuit breaker OPEN for '{intent}' after "
+              f"{state['failures']} failures, cooldown {_cb_cooldown_s()}s")
 
 
 def complete(prompt, system=None, intent="general", schema=None,
@@ -230,11 +272,15 @@ def complete(prompt, system=None, intent="general", schema=None,
     models.json are skipped rather than tried. `schema`/`schema_name` work as
     before; the caller gets the parsed object back on success.
     """
-    cascade = CASCADES.get(intent, CASCADES["general"])
+    resolved_intent = intent if intent in CASCADES else "general"
+    cascade = CASCADES[resolved_intent]
     errors = []
-    if _circuit_open():
-        print("  ! circuit breaker OPEN — failing fast, skipping cascade")
-        raise RuntimeError("AI gateway circuit breaker OPEN — providers temporarily unavailable")
+    had_outage_failure = False
+    if _circuit_open(resolved_intent):
+        print(f"  ! circuit breaker OPEN for '{resolved_intent}' — failing fast, skipping cascade")
+        raise CircuitOpenError(
+            f"AI gateway circuit breaker OPEN for '{resolved_intent}' — providers temporarily unavailable"
+        )
     if budget_s is None:
         # A malformed override must not raise out of here: complete()'s callers catch RuntimeError
         # (review.py turns it into an outage comment), so a ValueError would escape as an unhandled
@@ -324,9 +370,9 @@ def complete(prompt, system=None, intent="general", schema=None,
                         if cleaned.startswith("```"):
                             cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0]
                         parsed = json.loads(cleaned)
-                        _circuit_state["failures"] = 0  # reset on structured success too
+                        _circuit_succeed(resolved_intent)
                         return parsed, provider["name"]
-                    _circuit_state["failures"] = 0  # reset on success
+                    _circuit_succeed(resolved_intent)
                     return text, provider["name"]
                 except urllib.error.HTTPError as e:
                     detail = ""
@@ -337,6 +383,10 @@ def complete(prompt, system=None, intent="general", schema=None,
                     msg = f"{provider['name']} HTTP {e.code}: {detail}"
                     print(f"  ! {msg}")
                     errors.append(msg)
+                    # Only count provider outage/quota failures (429/5xx) toward
+                    # tripping the breaker; 400/422 can be client schema rejections.
+                    if e.code == 429 or e.code >= 500:
+                        had_outage_failure = True
                     if e.code == 429 and _NO_RETRY_CAP.search(detail):
                         print("    daily allowance or spent credits, not a burst limit -> next key")
                         break
@@ -348,9 +398,14 @@ def complete(prompt, system=None, intent="general", schema=None,
                     msg = f"{provider['name']}: {type(e).__name__}: {e}"
                     print(f"  ! {msg}")
                     errors.append(msg)
+                    # Budget-induced timeouts from a tight caller budget_s aren't
+                    # provider outages; other transport/parse failures are.
+                    if left() > 0:
+                        had_outage_failure = True
                     break
 
-    _circuit_fail()
+    if had_outage_failure:
+        _circuit_fail(resolved_intent)
     raise RuntimeError(
         "All providers in the cascade failed or were skipped:\n"
         + "\n".join(f"  - {e}" for e in errors)
