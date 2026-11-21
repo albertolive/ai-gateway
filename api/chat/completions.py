@@ -35,6 +35,7 @@ elapsed_ms) so fleet-wide usage is measurable; aggregate with `scripts/usage.py`
 """
 
 import json
+import math
 import os
 import sys
 import time
@@ -69,15 +70,15 @@ def _request_budget(body):
     """Per-request cascade budget (downward-only override, clamped to [5s, server cap])."""
     cap = _budget()
     raw = body.get("budget_s")
-    if raw is None:
+    if raw is None or isinstance(raw, bool):
         return cap
     try:
         value = float(raw)
     except (TypeError, ValueError):
         return cap
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         return cap
-    return max(5.0, min(value, cap))
+    return min(cap, max(5.0, value))
 
 
 def _elapsed_ms(started):

@@ -249,6 +249,20 @@ def test_request_budget_s_override_is_downward_only(gw, monkeypatch):
                "messages": [{"role": "user", "content": "read poster"}]})
     assert seen["budget_s"] == 5.0
 
+    # Non-finite or bool budget_s falls back to server cap
+    _post(gw, {"model": "vision", "budget_s": "nan",
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] == 280.0
+    _post(gw, {"model": "vision", "budget_s": True,
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] == 280.0
+
+    # Server cap takes precedence even when below the 5s floor
+    monkeypatch.setenv("AI_GATEWAY_BUDGET_S", "2")
+    _post(gw, {"model": "vision", "budget_s": 1,
+               "messages": [{"role": "user", "content": "read poster"}]})
+    assert seen["budget_s"] == 2.0
+
 
 def test_usage_logs_cb_open_only_for_circuit_open_error(gw, monkeypatch, capsys):
     def provider_err(*a, **kw):

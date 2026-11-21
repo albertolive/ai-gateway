@@ -99,9 +99,11 @@ class TestLoadCascades:
         assert "vision" in cascades
         vis = cascades["vision"]
         models = [e["model"] for e in vis]
-        assert models[0] == "gemini-3.5-flash-lite"
-        assert "gemini-3.6-flash" in models
-        assert "openrouter/free" not in models
+        assert models == [
+            "gemini-3.5-flash-lite",
+            "gemini-3.6-flash",
+            "google/gemma-4-26b-a4b-it:free",
+        ]
         assert all(e.get("vision", True) is True for e in vis)
         assert all(e["structured"] == "json_schema" for e in vis)
 
