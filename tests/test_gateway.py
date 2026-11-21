@@ -101,7 +101,8 @@ class TestLoadCascades:
         models = [e["model"] for e in vis]
         assert models == [
             "gemini-3.5-flash-lite",
-            "gemini-3.6-flash",
+            "gemini-3.1-flash-lite",
+            "gemma-4-26b-a4b-it",
             "google/gemma-4-26b-a4b-it:free",
         ]
         assert all(e.get("vision", True) is True for e in vis)
